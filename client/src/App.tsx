@@ -1,30 +1,123 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/app-sidebar";
+import { ThemeProvider } from "@/lib/theme-provider";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
 import NotFound from "@/pages/not-found";
+import Login from "@/pages/login";
+import ClientDashboard from "@/pages/client-dashboard";
+import ManagerDashboard from "@/pages/manager-dashboard";
+
+function ProtectedRoute({ component: Component }: { component: () => JSX.Element }) {
+  const { isAuthenticated } = useAuth();
+  
+  if (!isAuthenticated) {
+    return <Redirect to="/login" />;
+  }
+  
+  return <Component />;
+}
+
+function RoleBasedDashboard() {
+  const { user } = useAuth();
+  
+  if (!user) {
+    return <Redirect to="/login" />;
+  }
+  
+  switch (user.role) {
+    case "client":
+      return <ClientDashboard />;
+    case "manager":
+      return <ManagerDashboard />;
+    case "vp":
+    case "pv_sir":
+    case "accounts":
+    case "it":
+      return (
+        <div className="flex items-center justify-center h-full">
+          <div className="text-center space-y-4">
+            <h2 className="text-2xl font-bold">Dashboard Coming Soon</h2>
+            <p className="text-muted-foreground">
+              Your {user.role.replace("_", " ")} dashboard is under development
+            </p>
+          </div>
+        </div>
+      );
+    default:
+      return <ClientDashboard />;
+  }
+}
 
 function Router() {
+  const { isAuthenticated } = useAuth();
+  
   return (
     <Switch>
-      {/* Add pages below */}
-      {/* <Route path="/" component={Home}/> */}
-      {/* Fallback to 404 */}
+      <Route path="/login">
+        {isAuthenticated ? <Redirect to="/" /> : <Login />}
+      </Route>
+      <Route path="/">
+        <ProtectedRoute component={RoleBasedDashboard} />
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
 }
 
-function App() {
+function AppContent() {
+  const { isAuthenticated, user } = useAuth();
+  const sidebarStyle = {
+    "--sidebar-width": "20rem",
+    "--sidebar-width-icon": "4rem",
+  };
+  
+  if (!isAuthenticated) {
+    return <Router />;
+  }
+  
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <SidebarProvider style={sidebarStyle as React.CSSProperties}>
+      <div className="flex h-screen w-full">
+        <AppSidebar />
+        <div className="flex flex-col flex-1">
+          <header className="flex items-center justify-between gap-4 p-4 border-b">
+            <div className="flex items-center gap-4">
+              <SidebarTrigger data-testid="button-sidebar-toggle" />
+              <div>
+                <h2 className="font-semibold" data-testid="text-user-name">{user?.name}</h2>
+                <p className="text-sm text-muted-foreground" data-testid="text-user-role">
+                  {user?.role.replace("_", " ").toUpperCase()}
+                </p>
+              </div>
+            </div>
+            <ThemeToggle />
+          </header>
+          <main className="flex-1 overflow-auto p-6">
+            <Router />
+          </main>
+        </div>
+      </div>
+    </SidebarProvider>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider defaultTheme="light">
+        <TooltipProvider>
+          <AuthProvider>
+            <AppContent />
+            <Toaster />
+          </AuthProvider>
+        </TooltipProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
+}
