@@ -139,6 +139,13 @@ export default function Login() {
           ) : (
             <Form {...otpForm}>
               <form onSubmit={otpForm.handleSubmit(onOtpSubmit)} className="space-y-4">
+                <div className="bg-muted/50 p-3 rounded-md mb-4">
+                  <p className="text-sm text-muted-foreground">OTP sent to</p>
+                  <p className="font-semibold flex items-center gap-2">
+                    <Phone className="h-4 w-4" />
+                    {phone}
+                  </p>
+                </div>
                 <FormField
                   control={otpForm.control}
                   name="code"
@@ -150,7 +157,11 @@ export default function Login() {
                           <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                           <Input
                             {...field}
-                            placeholder="123456"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            autoComplete="one-time-code"
+                            placeholder="Enter 6-digit code"
                             maxLength={6}
                             className="pl-10 tracking-widest text-center text-xl"
                             data-testid="input-otp"
