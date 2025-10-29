@@ -1,15 +1,357 @@
 import type { Express } from "express";
-import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { insertUserSchema, insertOtpCodeSchema, insertSlotSchema, insertBookingSchema, insertBannerSchema, insertApprovalSchema } from "@shared/schema";
 
-export async function registerRoutes(app: Express): Promise<Server> {
-  // put application routes here
-  // prefix all routes with /api
+export function registerRoutes(app: Express) {
+  // Auth routes
+  app.post("/api/auth/send-otp", async (req, res) => {
+    try {
+      const { phone } = req.body;
+      
+      // Generate 6-digit OTP
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+      
+      await storage.createOtpCode({ phone, code, expiresAt, verified: false });
+      
+      // TODO: Send OTP via SMS service
+      console.log(`OTP for ${phone}: ${code}`);
+      
+      res.json({ success: true, message: "OTP sent successfully" });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
 
-  // use storage to perform CRUD operations on the storage interface
-  // e.g. storage.insertUser(user) or storage.getUserByUsername(username)
+  app.post("/api/auth/verify-otp", async (req, res) => {
+    try {
+      const { phone, code } = req.body;
+      
+      const otp = await storage.getValidOtp(phone, code);
+      if (!otp) {
+        return res.status(400).json({ error: "Invalid or expired OTP" });
+      }
+      
+      if (new Date() > new Date(otp.expiresAt)) {
+        return res.status(400).json({ error: "OTP has expired" });
+      }
+      
+      await storage.markOtpAsVerified(otp.id);
+      
+      const user = await storage.getUserByPhone(phone);
+      if (!user) {
+        return res.status(404).json({ error: "User not found. Please contact administrator to create your account." });
+      }
+      
+      res.json({ success: true, user });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
 
-  const httpServer = createServer(app);
+  // User routes
+  app.post("/api/users", async (req, res) => {
+    try {
+      const validatedData = insertUserSchema.parse(req.body);
+      const user = await storage.createUser(validatedData);
+      res.json(user);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
 
-  return httpServer;
+  app.get("/api/users/:id", async (req, res) => {
+    const user = await storage.getUser(parseInt(req.params.id));
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.json(user);
+  });
+
+  // Slot routes
+  app.get("/api/slots", async (req, res) => {
+    const slots = await storage.getAllSlots();
+    res.json(slots);
+  });
+
+  app.get("/api/slots/:id", async (req, res) => {
+    const slot = await storage.getSlot(parseInt(req.params.id));
+    if (!slot) {
+      return res.status(404).json({ error: "Slot not found" });
+    }
+    res.json(slot);
+  });
+
+  app.post("/api/slots", async (req, res) => {
+    try {
+      const validatedData = insertSlotSchema.parse(req.body);
+      const slot = await storage.createSlot(validatedData);
+      res.json(slot);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/slots/:id", async (req, res) => {
+    const slot = await storage.updateSlot(parseInt(req.params.id), req.body);
+    if (!slot) {
+      return res.status(404).json({ error: "Slot not found" });
+    }
+    res.json(slot);
+  });
+
+  // Booking routes
+  app.get("/api/bookings", async (req, res) => {
+    const { clientId, status } = req.query;
+    
+    if (clientId) {
+      const bookings = await storage.getBookingsByClient(parseInt(clientId as string));
+      return res.json(bookings);
+    }
+    
+    if (status) {
+      const bookings = await storage.getBookingsByStatus(status as string);
+      return res.json(bookings);
+    }
+    
+    const bookings = await storage.getAllBookings();
+    res.json(bookings);
+  });
+
+  app.get("/api/bookings/:id", async (req, res) => {
+    const booking = await storage.getBooking(parseInt(req.params.id));
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+    res.json(booking);
+  });
+
+  app.post("/api/bookings", async (req, res) => {
+    try {
+      const validatedData = insertBookingSchema.parse(req.body);
+      const booking = await storage.createBooking(validatedData);
+      
+      // Create approval workflow entries
+      await storage.createApproval({
+        bookingId: booking.id,
+        role: "manager",
+        status: "pending",
+        approverId: null,
+      });
+      
+      res.json(booking);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/bookings/:id", async (req, res) => {
+    const booking = await storage.updateBooking(parseInt(req.params.id), req.body);
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+    res.json(booking);
+  });
+
+  // Banner routes
+  app.get("/api/banners/booking/:bookingId", async (req, res) => {
+    const banners = await storage.getBannersByBooking(parseInt(req.params.bookingId));
+    res.json(banners);
+  });
+
+  app.get("/api/banners/current/:bookingId", async (req, res) => {
+    const banner = await storage.getCurrentBanner(parseInt(req.params.bookingId));
+    res.json(banner);
+  });
+
+  app.post("/api/banners", async (req, res) => {
+    try {
+      const validatedData = insertBannerSchema.parse(req.body);
+      const banner = await storage.createBanner(validatedData);
+      res.json(banner);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Approval routes
+  app.get("/api/approvals/booking/:bookingId", async (req, res) => {
+    const approvals = await storage.getApprovalsByBooking(parseInt(req.params.bookingId));
+    res.json(approvals);
+  });
+
+  app.get("/api/approvals/pending/:role", async (req, res) => {
+    const approvals = await storage.getPendingApprovals(req.params.role);
+    res.json(approvals);
+  });
+
+  app.post("/api/approvals", async (req, res) => {
+    try {
+      const validatedData = insertApprovalSchema.parse(req.body);
+      const approval = await storage.createApproval(validatedData);
+      res.json(approval);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/approvals/:id", async (req, res) => {
+    const approval = await storage.updateApproval(parseInt(req.params.id), req.body);
+    if (!approval) {
+      return res.status(404).json({ error: "Approval not found" });
+    }
+    
+    // Handle approval workflow progression
+    if (approval.status === "approved") {
+      const booking = await storage.getBooking(approval.bookingId);
+      if (!booking) {
+        return res.status(404).json({ error: "Booking not found" });
+      }
+      
+      // Progress to next stage
+      if (approval.role === "manager" && booking.status === "pending_manager") {
+        await storage.updateBooking(booking.id, { status: "pending_vp" });
+        await storage.createApproval({
+          bookingId: booking.id,
+          role: "vp",
+          status: "pending",
+          approverId: null,
+        });
+      } else if (approval.role === "vp" && booking.status === "pending_vp") {
+        await storage.updateBooking(booking.id, { status: "pending_pv" });
+        await storage.createApproval({
+          bookingId: booking.id,
+          role: "pv_sir",
+          status: "pending",
+          approverId: null,
+        });
+      } else if (approval.role === "pv_sir" && booking.status === "pending_pv") {
+        await storage.updateBooking(booking.id, { status: "pending_payment" });
+        await storage.createApproval({
+          bookingId: booking.id,
+          role: "accounts",
+          status: "pending",
+          approverId: null,
+        });
+      }
+    } else if (approval.status === "rejected") {
+      await storage.updateBooking(approval.bookingId, { status: "rejected" });
+    }
+    
+    res.json(approval);
+  });
+
+  // Notification routes
+  app.get("/api/notifications/:userId", async (req, res) => {
+    const notifications = await storage.getNotificationsByUser(parseInt(req.params.userId));
+    res.json(notifications);
+  });
+
+  app.patch("/api/notifications/:id/read", async (req, res) => {
+    await storage.markNotificationAsRead(parseInt(req.params.id));
+    res.json({ success: true });
+  });
+
+  // Analytics routes
+  app.get("/api/analytics/banner/:bannerId", async (req, res) => {
+    const analytics = await storage.getAnalyticsByBanner(parseInt(req.params.bannerId));
+    res.json(analytics);
+  });
+
+  // Version history routes
+  app.get("/api/version-history/:bannerId", async (req, res) => {
+    const history = await storage.getVersionHistory(parseInt(req.params.bannerId));
+    res.json(history);
+  });
+
+  // Payment routes
+  app.get("/api/payments/booking/:bookingId", async (req, res) => {
+    const payments = await storage.getPaymentsByBooking(parseInt(req.params.bookingId));
+    res.json(payments);
+  });
+
+  app.post("/api/payments/settle/:bookingId", async (req, res) => {
+    try {
+      const bookingId = parseInt(req.params.bookingId);
+      const { amount, paymentMethod } = req.body;
+      
+      const payment = await storage.createPayment({
+        bookingId,
+        amount,
+        paymentMethod,
+        status: "completed",
+        paymentDate: new Date(),
+      });
+      
+      // Update booking status and create IT deployment approval
+      const booking = await storage.getBooking(bookingId);
+      if (booking && booking.status === "pending_payment") {
+        await storage.updateBooking(bookingId, { status: "pending_deployment" });
+        
+        // Update accounts approval to approved
+        const approvals = await storage.getApprovalsByBooking(bookingId);
+        const accountsApproval = approvals.find(a => a.role === "accounts" && a.status === "pending");
+        if (accountsApproval) {
+          await storage.updateApproval(accountsApproval.id, { 
+            status: "approved",
+            approvedAt: new Date()
+          });
+        }
+        
+        // Create IT deployment approval
+        await storage.createApproval({
+          bookingId,
+          role: "it",
+          status: "pending",
+          approverId: null,
+        });
+      }
+      
+      res.json(payment);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Installment routes
+  app.get("/api/installments/booking/:bookingId", async (req, res) => {
+    const installments = await storage.getInstallmentsByBooking(parseInt(req.params.bookingId));
+    res.json(installments);
+  });
+
+  // Deployment routes
+  app.post("/api/deployments/complete/:bookingId", async (req, res) => {
+    try {
+      const bookingId = parseInt(req.params.bookingId);
+      const booking = await storage.getBooking(bookingId);
+      
+      if (!booking) {
+        return res.status(404).json({ error: "Booking not found" });
+      }
+      
+      if (booking.status === "pending_deployment") {
+        await storage.updateBooking(bookingId, { status: "active" });
+        
+        // Update IT approval to approved
+        const approvals = await storage.getApprovalsByBooking(bookingId);
+        const itApproval = approvals.find(a => a.role === "it" && a.status === "pending");
+        if (itApproval) {
+          await storage.updateApproval(itApproval.id, { 
+            status: "approved",
+            approvedAt: new Date()
+          });
+        }
+        
+        // Mark banner as active
+        const currentBanner = await storage.getCurrentBanner(bookingId);
+        if (currentBanner) {
+          await storage.updateBanner(currentBanner.id, { status: "active" });
+        }
+      }
+      
+      res.json({ success: true, booking });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
 }
