@@ -12,6 +12,8 @@ import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ClientDashboard from "@/pages/client-dashboard";
 import ManagerDashboard from "@/pages/manager-dashboard";
+import VPDashboard from "@/pages/vp-dashboard";
+import PVSirDashboard from "@/pages/pv-sir-dashboard";
 
 function ProtectedRoute({ component: Component }: { component: () => JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -36,7 +38,9 @@ function RoleBasedDashboard() {
     case "manager":
       return <ManagerDashboard />;
     case "vp":
+      return <VPDashboard />;
     case "pv_sir":
+      return <PVSirDashboard />;
     case "accounts":
     case "it":
       return (

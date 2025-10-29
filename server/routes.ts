@@ -153,6 +153,19 @@ export function registerRoutes(app: Express) {
     res.json(booking);
   });
 
+  app.patch("/api/bookings/:id/status", async (req, res) => {
+    try {
+      const { status } = req.body;
+      const booking = await storage.updateBooking(parseInt(req.params.id), { status });
+      if (!booking) {
+        return res.status(404).json({ error: "Booking not found" });
+      }
+      res.json(booking);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Banner routes
   app.get("/api/banners/booking/:bookingId", async (req, res) => {
     const banners = await storage.getBannersByBooking(parseInt(req.params.bookingId));
