@@ -14,6 +14,8 @@ import ClientDashboard from "@/pages/client-dashboard";
 import ManagerDashboard from "@/pages/manager-dashboard";
 import VPDashboard from "@/pages/vp-dashboard";
 import PVSirDashboard from "@/pages/pv-sir-dashboard";
+import AccountsDashboard from "@/pages/accounts-dashboard";
+import ITDashboard from "@/pages/it-dashboard";
 
 function ProtectedRoute({ component: Component }: { component: () => JSX.Element }) {
   const { isAuthenticated } = useAuth();
@@ -42,17 +44,9 @@ function RoleBasedDashboard() {
     case "pv_sir":
       return <PVSirDashboard />;
     case "accounts":
+      return <AccountsDashboard />;
     case "it":
-      return (
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center space-y-4">
-            <h2 className="text-2xl font-bold">Dashboard Coming Soon</h2>
-            <p className="text-muted-foreground">
-              Your {user.role.replace("_", " ")} dashboard is under development
-            </p>
-          </div>
-        </div>
-      );
+      return <ITDashboard />;
     default:
       return <ClientDashboard />;
   }

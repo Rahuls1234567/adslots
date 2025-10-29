@@ -156,10 +156,65 @@ export function registerRoutes(app: Express) {
   app.patch("/api/bookings/:id/status", async (req, res) => {
     try {
       const { status } = req.body;
-      const booking = await storage.updateBooking(parseInt(req.params.id), { status });
+      const bookingId = parseInt(req.params.id);
+      
+      // Get all approvals for this booking to update the current one
+      const approvals = await storage.getApprovalsByBooking(bookingId);
+      
+      // Determine which approval to mark as approved/rejected based on the new status
+      let roleToUpdate: string | null = null;
+      let nextRoleToCreate: string | null = null;
+      
+      if (status === "pending_vp") {
+        roleToUpdate = "manager";
+        nextRoleToCreate = "vp";
+      } else if (status === "pending_pv") {
+        roleToUpdate = "vp";
+        nextRoleToCreate = "pv_sir";
+      } else if (status === "pending_payment") {
+        roleToUpdate = "pv_sir";
+        nextRoleToCreate = "accounts";
+      } else if (status === "pending_deployment") {
+        roleToUpdate = "accounts";
+        nextRoleToCreate = "it";
+      } else if (status === "active") {
+        roleToUpdate = "it";
+        nextRoleToCreate = null;
+      } else if (status === "rejected") {
+        // Find the pending approval and mark it as rejected
+        const pendingApproval = approvals.find(a => a.status === "pending");
+        if (pendingApproval) {
+          await storage.updateApproval(pendingApproval.id, { status: "rejected" });
+        }
+      }
+      
+      // Update the current stage approval to "approved"
+      if (roleToUpdate) {
+        const currentApproval = approvals.find(a => a.role === roleToUpdate && a.status === "pending");
+        if (currentApproval) {
+          await storage.updateApproval(currentApproval.id, { status: "approved" });
+        }
+      }
+      
+      // Create next stage approval if needed (check for duplicates first)
+      if (nextRoleToCreate) {
+        const existingNextApproval = approvals.find(a => a.role === nextRoleToCreate);
+        if (!existingNextApproval) {
+          await storage.createApproval({
+            bookingId,
+            role: nextRoleToCreate,
+            status: "pending",
+            approverId: null,
+          });
+        }
+      }
+      
+      // Finally update the booking status
+      const booking = await storage.updateBooking(bookingId, { status });
       if (!booking) {
         return res.status(404).json({ error: "Booking not found" });
       }
+
       res.json(booking);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -246,6 +301,16 @@ export function registerRoutes(app: Express) {
           status: "pending",
           approverId: null,
         });
+      } else if (approval.role === "accounts" && booking.status === "pending_payment") {
+        await storage.updateBooking(booking.id, { status: "pending_deployment" });
+        await storage.createApproval({
+          bookingId: booking.id,
+          role: "it",
+          status: "pending",
+          approverId: null,
+        });
+      } else if (approval.role === "it" && booking.status === "pending_deployment") {
+        await storage.updateBooking(booking.id, { status: "active" });
       }
     } else if (approval.status === "rejected") {
       await storage.updateBooking(approval.bookingId, { status: "rejected" });
