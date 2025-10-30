@@ -11,10 +11,19 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
-import { Phone, Lock } from "lucide-react";
+import { Phone, Lock, Mail, User, Building } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const phoneSchema = z.object({
   phone: z.string().min(10, "Phone number must be at least 10 digits"),
+});
+
+const signupSchema = z.object({
+  name: z.string().min(2, "Name must be at least 2 characters"),
+  email: z.string().email("Invalid email address"),
+  phone: z.string().min(10, "Phone number must be at least 10 digits"),
+  gstNumber: z.string().optional(),
+  address: z.string().optional(),
 });
 
 const otpSchema = z.object({
@@ -25,7 +34,7 @@ export default function Login() {
   const [, setLocation] = useLocation();
   const { setUser } = useAuth();
   const { toast } = useToast();
-  const [step, setStep] = useState<"phone" | "otp">("phone");
+  const [step, setStep] = useState<"auth" | "otp">("auth");
   const [phone, setPhone] = useState("");
 
   const phoneForm = useForm<z.infer<typeof phoneSchema>>({
@@ -33,9 +42,42 @@ export default function Login() {
     defaultValues: { phone: "" },
   });
 
+  const signupForm = useForm<z.infer<typeof signupSchema>>({
+    resolver: zodResolver(signupSchema),
+    defaultValues: { 
+      name: "",
+      email: "",
+      phone: "",
+      gstNumber: "",
+      address: "",
+    },
+  });
+
   const otpForm = useForm<z.infer<typeof otpSchema>>({
     resolver: zodResolver(otpSchema),
     defaultValues: { code: "" },
+  });
+
+  const signupMutation = useMutation({
+    mutationFn: async (data: z.infer<typeof signupSchema>) => {
+      const res = await apiRequest("POST", "/api/auth/signup", data);
+      return await res.json();
+    },
+    onSuccess: (data, variables) => {
+      toast({
+        title: "Account Created!",
+        description: "Please check the console for your OTP code.",
+      });
+      setPhone(variables.phone);
+      setStep("otp");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Signup Failed",
+        description: error.message || "Failed to create account",
+        variant: "destructive",
+      });
+    },
   });
 
   const sendOtpMutation = useMutation({
@@ -46,7 +88,7 @@ export default function Login() {
     onSuccess: () => {
       toast({
         title: "OTP Sent",
-        description: "Please check your phone for the verification code.",
+        description: "Please check the console for your verification code.",
       });
       setStep("otp");
     },
@@ -74,12 +116,16 @@ export default function Login() {
     },
     onError: (error: any) => {
       toast({
-        title: "Error",
+        title: "Verification Failed",
         description: error.message || "Invalid OTP",
         variant: "destructive",
       });
     },
   });
+
+  const onSignupSubmit = (data: z.infer<typeof signupSchema>) => {
+    signupMutation.mutate(data);
+  };
 
   const onPhoneSubmit = (data: z.infer<typeof phoneSchema>) => {
     setPhone(data.phone);
@@ -96,46 +142,177 @@ export default function Login() {
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl font-bold">Ad Banner Management</CardTitle>
           <CardDescription>
-            {step === "phone" 
-              ? "Enter your phone number to receive an OTP" 
+            {step === "auth" 
+              ? "Sign up or login to get started" 
               : "Enter the 6-digit code sent to your phone"}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {step === "phone" ? (
-            <Form {...phoneForm}>
-              <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-4">
-                <FormField
-                  control={phoneForm.control}
-                  name="phone"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Phone Number</FormLabel>
-                      <FormControl>
-                        <div className="relative">
-                          <Phone className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                          <Input
-                            {...field}
-                            placeholder="+1234567890"
-                            className="pl-10"
-                            data-testid="input-phone"
-                          />
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={sendOtpMutation.isPending}
-                  data-testid="button-send-otp"
-                >
-                  {sendOtpMutation.isPending ? "Sending..." : "Send OTP"}
-                </Button>
-              </form>
-            </Form>
+          {step === "auth" ? (
+            <Tabs defaultValue="login" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="login" data-testid="tab-login">Login</TabsTrigger>
+                <TabsTrigger value="signup" data-testid="tab-signup">Sign Up</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="login">
+                <Form {...phoneForm}>
+                  <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-4">
+                    <FormField
+                      control={phoneForm.control}
+                      name="phone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Phone Number</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <Phone className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                {...field}
+                                placeholder="+1234567890"
+                                className="pl-10"
+                                data-testid="input-login-phone"
+                              />
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={sendOtpMutation.isPending}
+                      data-testid="button-login-send-otp"
+                    >
+                      {sendOtpMutation.isPending ? "Sending..." : "Send OTP"}
+                    </Button>
+                  </form>
+                </Form>
+              </TabsContent>
+
+              <TabsContent value="signup">
+                <Form {...signupForm}>
+                  <form onSubmit={signupForm.handleSubmit(onSignupSubmit)} className="space-y-4">
+                    <FormField
+                      control={signupForm.control}
+                      name="name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Full Name</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                {...field}
+                                placeholder="John Doe"
+                                className="pl-10"
+                                data-testid="input-signup-name"
+                              />
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={signupForm.control}
+                      name="email"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Email</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                {...field}
+                                type="email"
+                                placeholder="john@example.com"
+                                className="pl-10"
+                                data-testid="input-signup-email"
+                              />
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={signupForm.control}
+                      name="phone"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Phone Number</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <Phone className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                {...field}
+                                placeholder="+1234567890"
+                                className="pl-10"
+                                data-testid="input-signup-phone"
+                              />
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={signupForm.control}
+                      name="gstNumber"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>GST Number (Optional)</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <Building className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                {...field}
+                                placeholder="GST123456"
+                                className="pl-10"
+                                data-testid="input-signup-gst"
+                              />
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={signupForm.control}
+                      name="address"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Address (Optional)</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              placeholder="123 Main Street"
+                              data-testid="input-signup-address"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={signupMutation.isPending}
+                      data-testid="button-signup-submit"
+                    >
+                      {signupMutation.isPending ? "Creating Account..." : "Sign Up"}
+                    </Button>
+                  </form>
+                </Form>
+              </TabsContent>
+            </Tabs>
           ) : (
             <Form {...otpForm}>
               <form onSubmit={otpForm.handleSubmit(onOtpSubmit)} className="space-y-4">
@@ -186,12 +363,14 @@ export default function Login() {
                     variant="ghost"
                     className="w-full"
                     onClick={() => {
-                      setStep("phone");
+                      setStep("auth");
                       otpForm.reset();
+                      phoneForm.reset();
+                      signupForm.reset();
                     }}
                     data-testid="button-back"
                   >
-                    Back to Phone Number
+                    Back to {phone ? "Authentication" : "Login"}
                   </Button>
                 </div>
               </form>

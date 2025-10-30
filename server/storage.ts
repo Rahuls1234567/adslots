@@ -20,6 +20,7 @@ export interface IStorage {
   // Users
   getUser(id: number): Promise<User | undefined>;
   getUserByPhone(phone: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   
   // OTP
@@ -93,6 +94,11 @@ export class DbStorage implements IStorage {
 
   async getUserByPhone(phone: string): Promise<User | undefined> {
     const result = await db.select().from(users).where(eq(users.phone, phone));
+    return result[0];
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.email, email));
     return result[0];
   }
 

@@ -1,9 +1,40 @@
 import type { Express } from "express";
 import { storage } from "./storage";
-import { insertUserSchema, insertOtpCodeSchema, insertSlotSchema, insertBookingSchema, insertBannerSchema, insertApprovalSchema } from "@shared/schema";
+import { insertUserSchema, insertOtpCodeSchema, insertSlotSchema, insertBookingSchema, insertBannerSchema, insertApprovalSchema, signupSchema } from "@shared/schema";
 
 export function registerRoutes(app: Express) {
   // Auth routes
+  app.post("/api/auth/signup", async (req, res) => {
+    try {
+      const validatedData = signupSchema.parse(req.body);
+      
+      const existingUser = await storage.getUserByEmail(validatedData.email);
+      if (existingUser) {
+        return res.status(400).json({ error: "Email already registered. Please login instead." });
+      }
+      
+      const existingPhone = await storage.getUserByPhone(validatedData.phone);
+      if (existingPhone) {
+        return res.status(400).json({ error: "Phone number already registered. Please login instead." });
+      }
+      
+      const user = await storage.createUser({
+        ...validatedData,
+        role: "client",
+      });
+      
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      await storage.createOtpCode({ phone: validatedData.phone, code, expiresAt, verified: false });
+      
+      console.log(`OTP for ${validatedData.phone}: ${code}`);
+      
+      res.json({ success: true, message: "Account created! Please verify your phone with the OTP sent.", userId: user.id });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   app.post("/api/auth/send-otp", async (req, res) => {
     try {
       const { phone } = req.body;

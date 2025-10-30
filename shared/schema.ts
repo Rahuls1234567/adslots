@@ -29,8 +29,8 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   phone: text("phone").notNull().unique(),
   name: text("name").notNull(),
-  email: text("email"),
-  role: userRoleEnum("role").notNull(),
+  email: text("email").notNull().unique(),
+  role: userRoleEnum("role").notNull().default("client"),
   gstNumber: text("gst_number"),
   address: text("address"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -39,6 +39,16 @@ export const users = pgTable("users", {
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+// Signup schema - email and phone required
+export const signupSchema = z.object({
+  name: z.string().min(2, "Name must be at least 2 characters"),
+  email: z.string().email("Invalid email address"),
+  phone: z.string().min(10, "Phone number must be at least 10 digits"),
+  gstNumber: z.string().optional(),
+  address: z.string().optional(),
+});
+export type SignupData = z.infer<typeof signupSchema>;
 
 // OTP codes table
 export const otpCodes = pgTable("otp_codes", {
