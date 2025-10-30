@@ -1,160 +1,165 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useAuth } from "@/lib/auth-context";
-import { BookingModal } from "@/components/booking-modal";
+import { DateRangePicker } from "@/components/date-range-picker";
 import { SlotGrid } from "@/components/slot-grid";
-import { BannerUpload } from "@/components/banner-upload";
-import { AnimatedStatCard } from "@/components/animated-stat-card";
-import { Calendar, TrendingUp, Package, Monitor, Smartphone, Mail, BookOpen, ChevronDown, Upload as UploadIcon, DollarSign } from "lucide-react";
-import { type Booking, type Slot, type MediaType } from "@shared/schema";
+import { BookingModal } from "@/components/booking-modal";
+import { type Slot } from "@shared/schema";
+import { Monitor } from "lucide-react";
 
 export default function ClientDashboard() {
   const { user } = useAuth();
+  const [startDate, setStartDate] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
+  const [selectedPage, setSelectedPage] = useState<string>("main");
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
-  const [expandedBookings, setExpandedBookings] = useState<Set<number>>(new Set());
+
+  // Fetch available slots based on selected dates and page
+  const { data: availableSlots, isLoading } = useQuery<Slot[]>({
+    queryKey: ["/api/slots/available", { 
+      startDate: startDate?.toISOString().split('T')[0],
+      endDate: endDate?.toISOString().split('T')[0],
+      pageType: selectedPage 
+    }],
+    enabled: !!startDate && !!endDate,
+  });
+
+  const handleDateChange = (start: Date | null, end: Date | null) => {
+    setStartDate(start);
+    setEndDate(end);
+  };
 
   const handleBookSlot = (slot: Slot) => {
+    if (!startDate || !endDate) {
+      return;
+    }
     setSelectedSlot(slot);
     setBookingModalOpen(true);
   };
 
-  const toggleBooking = (bookingId: number) => {
-    setExpandedBookings(prev => {
-      const next = new Set(prev);
-      if (next.has(bookingId)) {
-        next.delete(bookingId);
-      } else {
-        next.add(bookingId);
-      }
-      return next;
-    });
-  };
+  // Filter slots to only show website type
+  const filteredSlots = availableSlots?.filter(slot => slot.mediaType === "website") || [];
 
-  const { data: bookings, isLoading: bookingsLoading } = useQuery<Booking[]>({
-    queryKey: ["/api/bookings", { clientId: user?.id }],
-    enabled: !!user,
-  });
-
-  const { data: slots, isLoading: slotsLoading } = useQuery<Slot[]>({
-    queryKey: ["/api/slots"],
-  });
-
-  const availableSlots = slots?.filter(s => s.status === "available") || [];
-  const activeBookings = bookings?.filter(b => b.status === "active") || [];
-  const pendingBookings = bookings?.filter(b => 
-    ["pending_manager", "pending_vp", "pending_pv", "pending_payment", "pending_deployment"].includes(b.status)
-  ) || [];
-  const totalRevenue = bookings?.reduce((sum, b) => sum + b.totalAmount, 0) || 0;
+  const pageTypes = [
+    { value: "main", label: "Landing Page" },
+    { value: "course", label: "Course Page" },
+    { value: "webinar", label: "Webinar Page" },
+    { value: "student_login", label: "Student Login" },
+    { value: "student_home", label: "Student Home" },
+    { value: "other", label: "Other Pages" },
+  ];
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold" data-testid="text-client-dashboard-title">Welcome, {user?.name}</h1>
-        <p className="text-muted-foreground">Manage your ad campaigns and bookings</p>
+    <div className="flex h-full">
+      {/* Left Sidebar - Date Picker (25%) */}
+      <div className="w-80 border-r bg-muted/30 p-6 space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold" data-testid="text-dashboard-title">
+            Welcome, {user?.name}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Select your ad campaign dates
+          </p>
+        </div>
+
+        <DateRangePicker
+          startDate={startDate}
+          endDate={endDate}
+          onDateChange={handleDateChange}
+        />
+
+        {startDate && endDate && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Selected Period</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-xs text-muted-foreground space-y-1">
+                <div className="flex justify-between">
+                  <span>Duration:</span>
+                  <span className="font-medium">
+                    {Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))} days
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Slots Available:</span>
+                  <span className="font-medium text-primary">
+                    {filteredSlots.length}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
-      <div className="grid gap-6 md:grid-cols-4">
-        <AnimatedStatCard
-          title="Active Campaigns"
-          value={activeBookings.length}
-          previousValue={activeBookings.length > 0 ? activeBookings.length - 1 : undefined}
-          icon={TrendingUp}
-          iconColor="text-green-600"
-        />
-
-        <AnimatedStatCard
-          title="Pending Approvals"
-          value={pendingBookings.length}
-          previousValue={pendingBookings.length > 0 ? pendingBookings.length + 1 : undefined}
-          icon={Calendar}
-          iconColor="text-orange-600"
-        />
-
-        <AnimatedStatCard
-          title="Available Slots"
-          value={availableSlots.length}
-          icon={Package}
-          iconColor="text-blue-600"
-        />
-
-        <AnimatedStatCard
-          title="Total Investment"
-          value={totalRevenue}
-          previousValue={totalRevenue > 0 ? totalRevenue * 0.85 : undefined}
-          prefix="₹"
-          decimals={0}
-          icon={DollarSign}
-          iconColor="text-purple-600"
-        />
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Available Ad Slots</CardTitle>
-          <CardDescription>Browse and select slots for your advertising campaigns across different media types</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {slotsLoading ? (
-            <div className="space-y-3">
-              {[...Array(3)].map((_, i) => (
-                <Skeleton key={i} className="h-24 w-full" />
-              ))}
+      {/* Right Main Area - Slot Selection (75%) */}
+      <div className="flex-1 p-8 space-y-6 overflow-auto">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-xl">Select Slots</CardTitle>
+                <CardDescription className="mt-1">
+                  Choose your advertising slots for the selected dates
+                </CardDescription>
+              </div>
+              <Monitor className="w-6 h-6 text-muted-foreground" />
             </div>
-          ) : availableSlots.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No available slots at the moment</p>
-          ) : (
-            <Tabs defaultValue="all" className="w-full">
-              <TabsList className="grid w-full grid-cols-5">
-                <TabsTrigger value="all" data-testid="tab-all">All</TabsTrigger>
-                <TabsTrigger value="website" data-testid="tab-website">
-                  <Monitor className="h-4 w-4 mr-2" />
-                  Website
-                </TabsTrigger>
-                <TabsTrigger value="mobile" data-testid="tab-mobile">
-                  <Smartphone className="h-4 w-4 mr-2" />
-                  Mobile
-                </TabsTrigger>
-                <TabsTrigger value="email" data-testid="tab-email">
-                  <Mail className="h-4 w-4 mr-2" />
-                  Email
-                </TabsTrigger>
-                <TabsTrigger value="magazine" data-testid="tab-magazine">
-                  <BookOpen className="h-4 w-4 mr-2" />
-                  Magazine
-                </TabsTrigger>
-              </TabsList>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Page Selector */}
+            <div className="flex items-center gap-4">
+              <span className="text-sm font-medium">Website</span>
+              <Select value={selectedPage} onValueChange={setSelectedPage}>
+                <SelectTrigger className="w-64" data-testid="select-page-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {pageTypes.map((page) => (
+                    <SelectItem key={page.value} value={page.value}>
+                      {page.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-              <TabsContent value="all" className="mt-6">
-                <SlotGrid 
-                  slots={availableSlots} 
+            {/* Slot Grid */}
+            {!startDate || !endDate ? (
+              <div className="text-center py-16 bg-muted/30 rounded-lg border-2 border-dashed">
+                <p className="text-muted-foreground">
+                  Please select start and end dates to view available slots
+                </p>
+              </div>
+            ) : isLoading ? (
+              <div className="grid grid-cols-6 gap-4">
+                {[...Array(12)].map((_, i) => (
+                  <Skeleton key={i} className="h-24 w-full" />
+                ))}
+              </div>
+            ) : filteredSlots.length === 0 ? (
+              <div className="text-center py-16 bg-muted/30 rounded-lg border-2 border-dashed">
+                <p className="text-muted-foreground">
+                  No slots available for the selected page and dates
+                </p>
+              </div>
+            ) : (
+              <div className="bg-card rounded-lg border p-6">
+                <SlotGrid
+                  slots={filteredSlots}
                   onSlotBook={handleBookSlot}
-                  mediaType="all"
+                  mediaType="website"
                 />
-              </TabsContent>
-
-              {(["website", "mobile", "email", "magazine"] as const).map((mediaType) => (
-                <TabsContent key={mediaType} value={mediaType} className="mt-6">
-                  <SlotGrid 
-                    slots={availableSlots.filter((slot) => slot.mediaType === mediaType)}
-                    onSlotBook={handleBookSlot}
-                    mediaType={mediaType}
-                  />
-                  {availableSlots.filter((s) => s.mediaType === mediaType).length === 0 && (
-                    <p className="text-center text-muted-foreground py-8">No {mediaType} slots available</p>
-                  )}
-                </TabsContent>
-              ))}
-            </Tabs>
-          )}
-        </CardContent>
-      </Card>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {user && (
         <BookingModal
@@ -162,83 +167,10 @@ export default function ClientDashboard() {
           userId={user.id}
           open={bookingModalOpen}
           onOpenChange={setBookingModalOpen}
+          startDate={startDate?.toISOString().split('T')[0] || ''}
+          endDate={endDate?.toISOString().split('T')[0] || ''}
         />
       )}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>My Bookings</CardTitle>
-          <CardDescription>Track the status of your advertising campaigns</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {bookingsLoading ? (
-            <div className="space-y-3">
-              {[...Array(3)].map((_, i) => (
-                <Skeleton key={i} className="h-20 w-full" />
-              ))}
-            </div>
-          ) : !bookings || bookings.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No bookings yet</p>
-          ) : (
-            <div className="space-y-4">
-              {bookings.map((booking) => (
-                <Collapsible
-                  key={booking.id}
-                  open={expandedBookings.has(booking.id)}
-                  onOpenChange={() => toggleBooking(booking.id)}
-                >
-                  <Card data-testid={`card-booking-${booking.id}`}>
-                    <CardContent className="pt-6">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">Booking #{booking.id}</span>
-                            <Badge variant={
-                              booking.status === "active" ? "default" :
-                              booking.status === "rejected" ? "destructive" :
-                              "secondary"
-                            }>
-                              {booking.status.replace(/_/g, " ")}
-                            </Badge>
-                          </div>
-                          <div className="text-sm text-muted-foreground mt-1">
-                            {booking.startDate} - {booking.endDate}
-                          </div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-bold text-lg">₹{booking.totalAmount}</div>
-                          <div className="text-sm text-muted-foreground">{booking.paymentType}</div>
-                        </div>
-                        <CollapsibleTrigger asChild>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            data-testid={`button-toggle-${booking.id}`}
-                            className="gap-2"
-                          >
-                            <UploadIcon className="w-4 h-4" />
-                            Manage Banners
-                            <ChevronDown className={`w-4 h-4 transition-transform ${expandedBookings.has(booking.id) ? "rotate-180" : ""}`} />
-                          </Button>
-                        </CollapsibleTrigger>
-                      </div>
-                      
-                      <CollapsibleContent className="mt-6">
-                        {user && (
-                          <BannerUpload 
-                            bookingId={booking.id} 
-                            uploadedById={user.id}
-                          />
-                        )}
-                      </CollapsibleContent>
-                    </CardContent>
-                  </Card>
-                </Collapsible>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
     </div>
   );
 }

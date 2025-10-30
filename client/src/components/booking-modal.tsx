@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -31,17 +31,32 @@ interface BookingModalProps {
   userId: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  startDate?: string;
+  endDate?: string;
 }
 
-export function BookingModal({ slot, userId, open, onOpenChange }: BookingModalProps) {
+export function BookingModal({ slot, userId, open, onOpenChange, startDate, endDate }: BookingModalProps) {
   const { toast } = useToast();
 
   const form = useForm<z.infer<typeof bookingSchema>>({
     resolver: zodResolver(bookingSchema),
     defaultValues: {
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
       paymentType: "full",
     },
   });
+
+  // Reset form when dates change
+  useEffect(() => {
+    if (startDate && endDate && open) {
+      form.reset({
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        paymentType: "full",
+      });
+    }
+  }, [startDate, endDate, open, form]);
 
   const createBookingMutation = useMutation({
     mutationFn: async (data: z.infer<typeof bookingSchema>) => {
@@ -58,6 +73,7 @@ export function BookingModal({ slot, userId, open, onOpenChange }: BookingModalP
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/slots"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/slots/available"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/bookings"] });
       toast({
         title: "Booking Created",

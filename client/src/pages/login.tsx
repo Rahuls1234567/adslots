@@ -11,8 +11,9 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
-import { Phone, Lock, Mail, User, Building } from "lucide-react";
+import { Phone, Lock, Mail, User, Building, MapPin, School } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 
 const phoneSchema = z.object({
   phone: z.string().min(10, "Phone number must be at least 10 digits"),
@@ -22,8 +23,9 @@ const signupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email address"),
   phone: z.string().min(10, "Phone number must be at least 10 digits"),
-  gstNumber: z.string().optional(),
-  address: z.string().optional(),
+  businessSchoolName: z.string().min(2, "Business school name is required"),
+  schoolAddress: z.string().min(5, "School address is required"),
+  gstNumber: z.string().regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/, "Invalid GST number format"),
 });
 
 const otpSchema = z.object({
@@ -48,8 +50,9 @@ export default function Login() {
       name: "",
       email: "",
       phone: "",
+      businessSchoolName: "",
+      schoolAddress: "",
       gstNumber: "",
-      address: "",
     },
   });
 
@@ -263,18 +266,18 @@ export default function Login() {
 
                     <FormField
                       control={signupForm.control}
-                      name="gstNumber"
+                      name="businessSchoolName"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>GST Number (Optional)</FormLabel>
+                          <FormLabel>Business School Name</FormLabel>
                           <FormControl>
                             <div className="relative">
-                              <Building className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                              <School className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                               <Input
                                 {...field}
-                                placeholder="GST123456"
+                                placeholder="Harvard Business School"
                                 className="pl-10"
-                                data-testid="input-signup-gst"
+                                data-testid="input-signup-school-name"
                               />
                             </div>
                           </FormControl>
@@ -285,16 +288,43 @@ export default function Login() {
 
                     <FormField
                       control={signupForm.control}
-                      name="address"
+                      name="schoolAddress"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Address (Optional)</FormLabel>
+                          <FormLabel>School Address</FormLabel>
                           <FormControl>
-                            <Input
-                              {...field}
-                              placeholder="123 Main Street"
-                              data-testid="input-signup-address"
-                            />
+                            <div className="relative">
+                              <MapPin className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                              <Textarea
+                                {...field}
+                                placeholder="Enter complete school address"
+                                className="pl-10 resize-none"
+                                rows={2}
+                                data-testid="input-signup-school-address"
+                              />
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={signupForm.control}
+                      name="gstNumber"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>GST Number</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <Building className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                {...field}
+                                placeholder="22AAAAA0000A1Z5"
+                                className="pl-10"
+                                data-testid="input-signup-gst"
+                              />
+                            </div>
                           </FormControl>
                           <FormMessage />
                         </FormItem>

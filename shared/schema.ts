@@ -31,8 +31,9 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   role: userRoleEnum("role").notNull().default("client"),
-  gstNumber: text("gst_number"),
-  address: text("address"),
+  businessSchoolName: text("business_school_name").notNull(),
+  schoolAddress: text("school_address").notNull(),
+  gstNumber: text("gst_number").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -40,13 +41,14 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true, creat
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
-// Signup schema - email and phone required
+// Signup schema - all business fields required
 export const signupSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email address"),
   phone: z.string().min(10, "Phone number must be at least 10 digits"),
-  gstNumber: z.string().optional(),
-  address: z.string().optional(),
+  businessSchoolName: z.string().min(2, "Business school name is required"),
+  schoolAddress: z.string().min(5, "School address is required"),
+  gstNumber: z.string().regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/, "Invalid GST number format"),
 });
 export type SignupData = z.infer<typeof signupSchema>;
 
@@ -73,6 +75,7 @@ export const slots = pgTable("slots", {
   dimensions: text("dimensions").notNull(), // e.g., "728x90", "300x250"
   pricing: decimal("pricing", { precision: 10, scale: 2 }).notNull(),
   status: slotStatusEnum("status").default("available").notNull(),
+  isBlocked: boolean("is_blocked").default(false).notNull(), // Manager can block slots
   magazinePageNumber: integer("magazine_page_number"), // Only for magazine media type
   layoutData: text("layout_data"), // JSON string for manager's drag-drop layout
   reservedByUserId: integer("reserved_by_user_id").references(() => users.id),

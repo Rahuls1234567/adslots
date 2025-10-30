@@ -113,6 +113,48 @@ export function registerRoutes(app: Express) {
     res.json(slots);
   });
 
+  // Get available slots for date range
+  app.get("/api/slots/available", async (req, res) => {
+    try {
+      const { startDate, endDate, pageType } = req.query;
+      
+      if (!startDate || !endDate) {
+        return res.status(400).json({ error: "startDate and endDate are required" });
+      }
+
+      // Get all slots
+      let slots = await storage.getAllSlots();
+
+      // Filter by page type if provided
+      if (pageType) {
+        slots = slots.filter(s => s.pageType === pageType);
+      }
+
+      // Filter out blocked slots
+      slots = slots.filter(s => !s.isBlocked && s.status === "available");
+
+      // Get all bookings that overlap with the date range
+      const allBookings = await storage.getAllBookings();
+      const overlappingBookings = allBookings.filter(booking => {
+        const bookingStart = new Date(booking.startDate);
+        const bookingEnd = new Date(booking.endDate);
+        const rangeStart = new Date(startDate as string);
+        const rangeEnd = new Date(endDate as string);
+
+        // Check if date ranges overlap
+        return bookingStart <= rangeEnd && bookingEnd >= rangeStart;
+      });
+
+      // Filter out slots that are booked in the overlapping bookings
+      const bookedSlotIds = new Set(overlappingBookings.map(b => b.slotId));
+      const availableSlots = slots.filter(s => !bookedSlotIds.has(s.id));
+
+      res.json(availableSlots);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch available slots", details: error.message });
+    }
+  });
+
   app.get("/api/slots/:id", async (req, res) => {
     const slot = await storage.getSlot(parseInt(req.params.id));
     if (!slot) {

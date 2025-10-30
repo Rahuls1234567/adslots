@@ -11,6 +11,7 @@ import { AuthProvider, useAuth } from "@/lib/auth-context";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ClientDashboard from "@/pages/client-dashboard";
+import Analytics from "@/pages/analytics";
 import ManagerDashboard from "@/pages/manager-dashboard";
 import VPDashboard from "@/pages/vp-dashboard";
 import PVSirDashboard from "@/pages/pv-sir-dashboard";
@@ -60,6 +61,9 @@ function Router() {
       <Route path="/login">
         {isAuthenticated ? <Redirect to="/" /> : <Login />}
       </Route>
+      <Route path="/analytics">
+        <ProtectedRoute component={Analytics} />
+      </Route>
       <Route path="/">
         <ProtectedRoute component={RoleBasedDashboard} />
       </Route>
@@ -71,7 +75,7 @@ function Router() {
 function AppContent() {
   const { isAuthenticated, user } = useAuth();
   const sidebarStyle = {
-    "--sidebar-width": "20rem",
+    "--sidebar-width": "16rem",
     "--sidebar-width-icon": "4rem",
   };
   
