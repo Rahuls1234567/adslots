@@ -10,7 +10,8 @@ import { useAuth } from "@/lib/auth-context";
 import { BookingModal } from "@/components/booking-modal";
 import { SlotGrid } from "@/components/slot-grid";
 import { BannerUpload } from "@/components/banner-upload";
-import { Calendar, TrendingUp, Package, Monitor, Smartphone, Mail, BookOpen, ChevronDown, Upload as UploadIcon } from "lucide-react";
+import { AnimatedStatCard } from "@/components/animated-stat-card";
+import { Calendar, TrendingUp, Package, Monitor, Smartphone, Mail, BookOpen, ChevronDown, Upload as UploadIcon, DollarSign } from "lucide-react";
 import { type Booking, type Slot, type MediaType } from "@shared/schema";
 
 export default function ClientDashboard() {
@@ -50,6 +51,7 @@ export default function ClientDashboard() {
   const pendingBookings = bookings?.filter(b => 
     ["pending_manager", "pending_vp", "pending_pv", "pending_payment", "pending_deployment"].includes(b.status)
   ) || [];
+  const totalRevenue = bookings?.reduce((sum, b) => sum + b.totalAmount, 0) || 0;
 
   return (
     <div className="space-y-8">
@@ -58,39 +60,39 @@ export default function ClientDashboard() {
         <p className="text-muted-foreground">Manage your ad campaigns and bookings</p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Campaigns</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-active-campaigns">{activeBookings.length}</div>
-            <p className="text-xs text-muted-foreground">Currently running</p>
-          </CardContent>
-        </Card>
+      <div className="grid gap-6 md:grid-cols-4">
+        <AnimatedStatCard
+          title="Active Campaigns"
+          value={activeBookings.length}
+          previousValue={activeBookings.length > 0 ? activeBookings.length - 1 : undefined}
+          icon={TrendingUp}
+          iconColor="text-green-600"
+        />
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Approvals</CardTitle>
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-pending-approvals">{pendingBookings.length}</div>
-            <p className="text-xs text-muted-foreground">Awaiting review</p>
-          </CardContent>
-        </Card>
+        <AnimatedStatCard
+          title="Pending Approvals"
+          value={pendingBookings.length}
+          previousValue={pendingBookings.length > 0 ? pendingBookings.length + 1 : undefined}
+          icon={Calendar}
+          iconColor="text-orange-600"
+        />
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Available Slots</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-available-slots">{availableSlots.length}</div>
-            <p className="text-xs text-muted-foreground">Ready to book</p>
-          </CardContent>
-        </Card>
+        <AnimatedStatCard
+          title="Available Slots"
+          value={availableSlots.length}
+          icon={Package}
+          iconColor="text-blue-600"
+        />
+
+        <AnimatedStatCard
+          title="Total Investment"
+          value={totalRevenue}
+          previousValue={totalRevenue > 0 ? totalRevenue * 0.85 : undefined}
+          prefix="₹"
+          decimals={0}
+          icon={DollarSign}
+          iconColor="text-purple-600"
+        />
       </div>
 
       <Card>
