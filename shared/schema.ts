@@ -75,6 +75,8 @@ export const slots = pgTable("slots", {
   status: slotStatusEnum("status").default("available").notNull(),
   magazinePageNumber: integer("magazine_page_number"), // Only for magazine media type
   layoutData: text("layout_data"), // JSON string for manager's drag-drop layout
+  reservedByUserId: integer("reserved_by_user_id").references(() => users.id),
+  reservedAt: timestamp("reserved_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

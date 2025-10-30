@@ -33,6 +33,9 @@ export interface IStorage {
   getSlot(id: number): Promise<Slot | undefined>;
   createSlot(slot: InsertSlot): Promise<Slot>;
   updateSlot(id: number, slot: Partial<InsertSlot>): Promise<Slot | undefined>;
+  selectSlot(slotId: number, userId: number): Promise<Slot | null>;
+  releaseSlot(slotId: number, userId: number): Promise<Slot | null>;
+  confirmSlot(slotId: number, userId: number): Promise<Slot | null>;
   
   // Bookings
   getAllBookings(): Promise<Booking[]>;
@@ -148,6 +151,59 @@ export class DbStorage implements IStorage {
   async updateSlot(id: number, slot: Partial<InsertSlot>): Promise<Slot | undefined> {
     const result = await db.update(slots).set(slot).where(eq(slots.id, id)).returning();
     return result[0];
+  }
+
+  async selectSlot(slotId: number, userId: number): Promise<Slot | null> {
+    const result = await db.update(slots)
+      .set({
+        status: "pending",
+        reservedByUserId: userId,
+        reservedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(slots.id, slotId),
+          eq(slots.status, "available")
+        )
+      )
+      .returning();
+    return result[0] || null;
+  }
+
+  async releaseSlot(slotId: number, userId: number): Promise<Slot | null> {
+    const result = await db.update(slots)
+      .set({
+        status: "available",
+        reservedByUserId: null,
+        reservedAt: null,
+      })
+      .where(
+        and(
+          eq(slots.id, slotId),
+          eq(slots.status, "pending"),
+          eq(slots.reservedByUserId, userId)
+        )
+      )
+      .returning();
+    return result[0] || null;
+  }
+
+  async confirmSlot(slotId: number, userId: number): Promise<Slot | null> {
+    const result = await db.update(slots)
+      .set({
+        status: "booked",
+        reservedByUserId: null,
+        reservedAt: null,
+      })
+      .where(
+        and(
+          eq(slots.id, slotId),
+          eq(slots.status, "pending"),
+          eq(slots.reservedByUserId, userId)
+        )
+      )
+      .returning();
+    return result[0] || null;
   }
 
   // Bookings

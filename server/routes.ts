@@ -131,6 +131,102 @@ export function registerRoutes(app: Express) {
     res.json(slot);
   });
 
+  // Slot state transition routes
+  app.post("/api/slots/:id/select", async (req, res) => {
+    try {
+      const slotId = parseInt(req.params.id);
+      const { userId } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+
+      const updatedSlot = await storage.selectSlot(slotId, userId);
+
+      if (!updatedSlot) {
+        const slot = await storage.getSlot(slotId);
+        if (!slot) {
+          return res.status(404).json({ error: "Slot not found" });
+        }
+        return res.status(409).json({ 
+          error: "Slot is not available", 
+          currentStatus: slot.status,
+          reservedBy: slot.reservedByUserId 
+        });
+      }
+
+      res.json(updatedSlot);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/slots/:id/release", async (req, res) => {
+    try {
+      const slotId = parseInt(req.params.id);
+      const { userId } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+
+      const updatedSlot = await storage.releaseSlot(slotId, userId);
+
+      if (!updatedSlot) {
+        const slot = await storage.getSlot(slotId);
+        if (!slot) {
+          return res.status(404).json({ error: "Slot not found" });
+        }
+        if (slot.status !== "pending") {
+          return res.status(409).json({ 
+            error: "Only pending slots can be released",
+            currentStatus: slot.status
+          });
+        }
+        return res.status(403).json({ 
+          error: "You cannot release a slot reserved by another user" 
+        });
+      }
+
+      res.json(updatedSlot);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/slots/:id/confirm", async (req, res) => {
+    try {
+      const slotId = parseInt(req.params.id);
+      const { userId } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ error: "User ID is required" });
+      }
+
+      const updatedSlot = await storage.confirmSlot(slotId, userId);
+
+      if (!updatedSlot) {
+        const slot = await storage.getSlot(slotId);
+        if (!slot) {
+          return res.status(404).json({ error: "Slot not found" });
+        }
+        if (slot.status !== "pending") {
+          return res.status(409).json({ 
+            error: "Slot must be in pending status to confirm", 
+            currentStatus: slot.status 
+          });
+        }
+        return res.status(403).json({ 
+          error: "You can only confirm slots you reserved" 
+        });
+      }
+
+      res.json(updatedSlot);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Booking routes
   app.get("/api/bookings", async (req, res) => {
     const { clientId, status } = req.query;
