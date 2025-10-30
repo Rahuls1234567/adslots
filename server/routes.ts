@@ -377,6 +377,21 @@ export function registerRoutes(app: Express) {
     }
   });
 
+  // Get banners by booking
+  app.get("/api/banners/:bookingId", async (req, res) => {
+    try {
+      const bookingId = parseInt(req.params.bookingId);
+      if (isNaN(bookingId)) {
+        return res.status(400).json({ error: "Invalid booking ID" });
+      }
+      
+      const banners = await storage.getBannersByBooking(bookingId);
+      res.json(banners);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch banners", details: error.message });
+    }
+  });
+
   app.post("/api/banners/upload", upload.single("file"), async (req, res) => {
     const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
     const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB

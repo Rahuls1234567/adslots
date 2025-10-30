@@ -5,20 +5,35 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useAuth } from "@/lib/auth-context";
 import { BookingModal } from "@/components/booking-modal";
 import { SlotGrid } from "@/components/slot-grid";
-import { Calendar, TrendingUp, Package, Monitor, Smartphone, Mail, BookOpen } from "lucide-react";
+import { BannerUpload } from "@/components/banner-upload";
+import { Calendar, TrendingUp, Package, Monitor, Smartphone, Mail, BookOpen, ChevronDown, Upload as UploadIcon } from "lucide-react";
 import { type Booking, type Slot, type MediaType } from "@shared/schema";
 
 export default function ClientDashboard() {
   const { user } = useAuth();
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [bookingModalOpen, setBookingModalOpen] = useState(false);
+  const [expandedBookings, setExpandedBookings] = useState<Set<number>>(new Set());
 
   const handleBookSlot = (slot: Slot) => {
     setSelectedSlot(slot);
     setBookingModalOpen(true);
+  };
+
+  const toggleBooking = (bookingId: number) => {
+    setExpandedBookings(prev => {
+      const next = new Set(prev);
+      if (next.has(bookingId)) {
+        next.delete(bookingId);
+      } else {
+        next.add(bookingId);
+      }
+      return next;
+    });
   };
 
   const { data: bookings, isLoading: bookingsLoading } = useQuery<Booking[]>({
@@ -165,32 +180,58 @@ export default function ClientDashboard() {
           ) : (
             <div className="space-y-4">
               {bookings.map((booking) => (
-                <Card key={booking.id} data-testid={`card-booking-${booking.id}`}>
-                  <CardContent className="flex items-center justify-between gap-4 pt-6">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">Booking #{booking.id}</span>
-                        <Badge variant={
-                          booking.status === "active" ? "default" :
-                          booking.status === "rejected" ? "destructive" :
-                          "secondary"
-                        }>
-                          {booking.status.replace(/_/g, " ")}
-                        </Badge>
+                <Collapsible
+                  key={booking.id}
+                  open={expandedBookings.has(booking.id)}
+                  onOpenChange={() => toggleBooking(booking.id)}
+                >
+                  <Card data-testid={`card-booking-${booking.id}`}>
+                    <CardContent className="pt-6">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">Booking #{booking.id}</span>
+                            <Badge variant={
+                              booking.status === "active" ? "default" :
+                              booking.status === "rejected" ? "destructive" :
+                              "secondary"
+                            }>
+                              {booking.status.replace(/_/g, " ")}
+                            </Badge>
+                          </div>
+                          <div className="text-sm text-muted-foreground mt-1">
+                            {booking.startDate} - {booking.endDate}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-lg">₹{booking.totalAmount}</div>
+                          <div className="text-sm text-muted-foreground">{booking.paymentType}</div>
+                        </div>
+                        <CollapsibleTrigger asChild>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            data-testid={`button-toggle-${booking.id}`}
+                            className="gap-2"
+                          >
+                            <UploadIcon className="w-4 h-4" />
+                            Manage Banners
+                            <ChevronDown className={`w-4 h-4 transition-transform ${expandedBookings.has(booking.id) ? "rotate-180" : ""}`} />
+                          </Button>
+                        </CollapsibleTrigger>
                       </div>
-                      <div className="text-sm text-muted-foreground mt-1">
-                        {booking.startDate} - {booking.endDate}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-bold text-lg">₹{booking.totalAmount}</div>
-                      <div className="text-sm text-muted-foreground">{booking.paymentType}</div>
-                    </div>
-                    <Button variant="outline" size="sm" data-testid={`button-view-${booking.id}`}>
-                      View Details
-                    </Button>
-                  </CardContent>
-                </Card>
+                      
+                      <CollapsibleContent className="mt-6">
+                        {user && (
+                          <BannerUpload 
+                            bookingId={booking.id} 
+                            uploadedById={user.id}
+                          />
+                        )}
+                      </CollapsibleContent>
+                    </CardContent>
+                  </Card>
+                </Collapsible>
               ))}
             </div>
           )}
