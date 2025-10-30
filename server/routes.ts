@@ -1,6 +1,14 @@
 import type { Express } from "express";
+import multer from "multer";
+import { Client } from "@replit/object-storage";
+import path from "path";
 import { storage } from "./storage";
+import { db } from "./db";
+import { banners, versionHistory } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
 import { insertUserSchema, insertOtpCodeSchema, insertSlotSchema, insertBookingSchema, insertBannerSchema, insertApprovalSchema, signupSchema } from "@shared/schema";
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 export function registerRoutes(app: Express) {
   // Auth routes
@@ -366,6 +374,147 @@ export function registerRoutes(app: Express) {
       res.json(banner);
     } catch (error: any) {
       res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/banners/upload", upload.single("file"), async (req, res) => {
+    const ALLOWED_MIME_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    
+    let uploadedFileName: string | null = null;
+    
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      if (!ALLOWED_MIME_TYPES.includes(req.file.mimetype)) {
+        return res.status(400).json({ 
+          error: "Invalid file type. Only JPEG, PNG, GIF, and WebP images are allowed" 
+        });
+      }
+
+      if (req.file.size > MAX_FILE_SIZE) {
+        return res.status(400).json({ 
+          error: `File size exceeds maximum allowed size of ${MAX_FILE_SIZE / 1024 / 1024}MB` 
+        });
+      }
+
+      const { bookingId, uploadedById } = req.body;
+
+      if (!bookingId || !uploadedById) {
+        return res.status(400).json({ error: "bookingId and uploadedById are required" });
+      }
+
+      const parsedBookingId = parseInt(bookingId, 10);
+      const parsedUploadedById = parseInt(uploadedById, 10);
+
+      if (isNaN(parsedBookingId) || isNaN(parsedUploadedById)) {
+        return res.status(400).json({ error: "bookingId and uploadedById must be valid numbers" });
+      }
+
+      const booking = await storage.getBooking(parsedBookingId);
+      if (!booking) {
+        return res.status(404).json({ error: "Booking not found" });
+      }
+
+      const existingBanners = await storage.getBannersByBooking(parsedBookingId);
+      const nextVersion = existingBanners.length > 0 
+        ? Math.max(...existingBanners.map(b => b.version)) + 1 
+        : 1;
+
+      const fileExtension = path.extname(req.file.originalname);
+      const fileName = `banner-${parsedBookingId}-v${nextVersion}-${Date.now()}${fileExtension}`;
+      uploadedFileName = fileName;
+      
+      const objectStorageClient = new Client();
+      
+      try {
+        await objectStorageClient.uploadFromBytes(fileName, req.file.buffer, {
+          metadata: {
+            bookingId: parsedBookingId.toString(),
+            version: nextVersion.toString(),
+            uploadedById: parsedUploadedById.toString(),
+          }
+        });
+      } catch (storageError: any) {
+        return res.status(500).json({ 
+          error: "Failed to upload file to storage", 
+          details: storageError.message 
+        });
+      }
+
+      let fileUrl: string;
+      try {
+        fileUrl = await objectStorageClient.getDownloadUrl(fileName);
+      } catch {
+        fileUrl = fileName;
+      }
+
+      let banner;
+      try {
+        banner = await db.transaction(async (tx) => {
+          const currentBannerResult = await tx.select().from(banners)
+            .where(and(eq(banners.bookingId, parsedBookingId), eq(banners.isCurrent, true)));
+          const currentBanner = currentBannerResult[0];
+          
+          const [newBanner] = await tx.insert(banners).values({
+            bookingId: parsedBookingId,
+            fileUrl: fileUrl,
+            version: nextVersion,
+            uploadedById: parsedUploadedById,
+            status: "pending",
+            isCurrent: true,
+          }).returning();
+
+          if (currentBanner) {
+            await tx.update(banners).set({ isCurrent: false }).where(eq(banners.id, currentBanner.id));
+          }
+
+          if (existingBanners.length > 0) {
+            await tx.insert(versionHistory).values({
+              bannerId: newBanner.id,
+              version: nextVersion,
+              fileUrl: fileUrl,
+              editedById: parsedUploadedById,
+              comments: req.body.comments || null,
+            });
+          }
+
+          return newBanner;
+        });
+      } catch (dbError: any) {
+        try {
+          await objectStorageClient.delete(fileName);
+        } catch {
+          // Cleanup failed - file will be orphaned
+        }
+        uploadedFileName = null;
+        return res.status(500).json({ 
+          error: "Database transaction failed", 
+          details: dbError.message 
+        });
+      }
+
+      res.json({
+        success: true,
+        banner,
+        message: `Banner uploaded successfully as version ${nextVersion}`,
+      });
+    } catch (error: any) {
+      if (uploadedFileName) {
+        try {
+          const objectStorageClient = new Client();
+          await objectStorageClient.delete(uploadedFileName);
+        } catch {
+          // Cleanup failed - log but don't fail the request
+        }
+      }
+      
+      res.status(500).json({ 
+        error: "Banner upload failed", 
+        details: error.message 
+      });
     }
   });
 
