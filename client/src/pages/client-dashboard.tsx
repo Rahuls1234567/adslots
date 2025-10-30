@@ -2,13 +2,14 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth-context";
 import { BookingModal } from "@/components/booking-modal";
+import { SlotGrid } from "@/components/slot-grid";
 import { Calendar, TrendingUp, Package, Monitor, Smartphone, Mail, BookOpen } from "lucide-react";
-import type { Booking, Slot } from "@shared/schema";
+import { type Booking, type Slot, type MediaType } from "@shared/schema";
 
 export default function ClientDashboard() {
   const { user } = useAuth();
@@ -114,80 +115,20 @@ export default function ClientDashboard() {
               </TabsList>
 
               <TabsContent value="all" className="mt-6">
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                  {availableSlots.map((slot) => (
-                    <Card key={slot.id} className="hover-elevate" data-testid={`card-slot-${slot.id}`}>
-                      <CardHeader>
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <CardTitle className="text-base capitalize">{slot.pageType.replace(/_/g, " ")}</CardTitle>
-                            <CardDescription className="capitalize">{slot.mediaType}</CardDescription>
-                          </div>
-                          <Badge>{slot.status}</Badge>
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-3">
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Position:</span>
-                            <span className="font-medium capitalize">{slot.position}</span>
-                          </div>
-                          <div className="flex justify-between text-sm">
-                            <span className="text-muted-foreground">Dimensions:</span>
-                            <span className="font-medium">{slot.dimensions}</span>
-                          </div>
-                          <div className="flex justify-between items-center pt-2 border-t">
-                            <div>
-                              <div className="text-xs text-muted-foreground">Price</div>
-                              <div className="text-xl font-bold text-primary">₹{slot.pricing}</div>
-                            </div>
-                            <Button onClick={() => handleBookSlot(slot)} data-testid={`button-book-${slot.id}`}>
-                              Book Now
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
+                <SlotGrid 
+                  slots={availableSlots} 
+                  onSlotBook={handleBookSlot}
+                  mediaType="all"
+                />
               </TabsContent>
 
-              {["website", "mobile", "email", "magazine"].map((mediaType) => (
+              {(["website", "mobile", "email", "magazine"] as const).map((mediaType) => (
                 <TabsContent key={mediaType} value={mediaType} className="mt-6">
-                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {availableSlots
-                      .filter((slot) => slot.mediaType === mediaType)
-                      .map((slot) => (
-                        <Card key={slot.id} className="hover-elevate" data-testid={`card-slot-${slot.id}`}>
-                          <CardHeader>
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex-1">
-                                <CardTitle className="text-base capitalize">{slot.pageType.replace(/_/g, " ")}</CardTitle>
-                                <CardDescription className="capitalize">{slot.position}</CardDescription>
-                              </div>
-                              <Badge>{slot.status}</Badge>
-                            </div>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="space-y-3">
-                              <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Dimensions:</span>
-                                <span className="font-medium">{slot.dimensions}</span>
-                              </div>
-                              <div className="flex justify-between items-center pt-2 border-t">
-                                <div>
-                                  <div className="text-xs text-muted-foreground">Price</div>
-                                  <div className="text-xl font-bold text-primary">₹{slot.pricing}</div>
-                                </div>
-                                <Button onClick={() => handleBookSlot(slot)} data-testid={`button-book-${slot.id}`}>
-                                  Book
-                                </Button>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
-                  </div>
+                  <SlotGrid 
+                    slots={availableSlots.filter((slot) => slot.mediaType === mediaType)}
+                    onSlotBook={handleBookSlot}
+                    mediaType={mediaType}
+                  />
                   {availableSlots.filter((s) => s.mediaType === mediaType).length === 0 && (
                     <p className="text-center text-muted-foreground py-8">No {mediaType} slots available</p>
                   )}
