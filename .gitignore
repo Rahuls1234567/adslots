@@ -7,3 +7,7 @@ vite.config.ts.*
 .env
 doc
 
+# Upload data - exclude all uploaded files
+server/uploads/*
+!server/uploads/.gitkeep
+
