@@ -1,0 +1,130 @@
+Ad Banner Management System – Requirement Note (OpƟmized & AutomaƟon Focused) 
+1. ObjecƟve 
+To develop a fully automated Ad Banner Management System for TIME’s digital ecosystem 
+— covering Main Page, Course Page, Webinar Pages, Student Login Pages, and Student 
+Home Page. 
+The plaƞorm should automate the enƟre workﬂow from slot creaƟon → client request → 
+approval → payment → banner upload → tracking & expiry management, with integrated 
+noƟﬁcaƟons and reports. 
+ 
+2. Key Roles and ResponsibiliƟes 
+A. Client 
+1. Login via Phone Number and OTP. 
+2. View available ad slots across TIME’s pages (with page name, slot posiƟon, 
+dimensions, and sample preview). 
+3. Raise ad placement request by selecƟng slot(s) and deﬁning duraƟon (start–end 
+date). 
+4. Upload banner and Purchase Order (PO) during the request submission. 
+5. Receive commercial details shared by TIME Manager (amount, payment type, 
+installment details). 
+6. Make online payment via integrated Payment Gateway. 
+7. OpƟon to renew, pause, or extend an acƟve banner. 
+8. Access performance reports: 
+o Total clicks and impressions 
+o CTR (Click-Through Rate) 
+o Page-wise performance summary 
+ 
+B. Manager 
+1. Add Clients (GST, Address, Contact details). 
+2. Deﬁne Slot Pricing and Validity OpƟons (full/instalment/pay-later). 
+3. Block slots manually if client cannot raise a request directly. 
+4. Review and approve client banners and POs. 
+5. Generate quotaƟon or proforma invoice automaƟcally. 
+6. Set installment breakup with date and amount. 
+7. Access manager dashboard showing: 
+o Pending approvals 
+o Expiring ads 
+o Revenue and collecƟon status 
+o Slot uƟlizaƟon rate 
+ 
+C. Vice President 
+1. Review Manager’s entries and approve/reject with comments. 
+2. Dashboard summary of all campaigns: total approved, pending, and expired. 
+3. Access consolidated ﬁnancial and analyƟcal reports. 
+ 
+D. PV Sir (Company Head) 
+1. Final approval authority post VP review. 
+2. Receives email with direct approval link for each ad. 
+3. Dashboard showing: 
+o Total approved ads 
+o Ongoing campaigns 
+o Total revenue and pending dues 
+ 
+E. Accounts 
+1. AƩach invoices generated from Tally. 
+2. Track payments (full, installment, pay-later). 
+3. Automated reconciliaƟon between Payment Gateway and Tally. 
+4. Receive alerts for missed/overdue payments. 
+5. Access detailed payment reports per client and per slot. 
+6. System to push the details back to Tally  
+ 
+F. IT Team 
+1. Deﬁne and manage Slot Master (page name, locaƟon, size, banner type). 
+2. Receive automaƟc noƟﬁcaƟon once PV Sir approves the ad. 
+3. Push approved banners automaƟcally to the respecƟve slots. 
+4. Maintain backup banners that replace expired ones automaƟcally. 
+5. Receive expiry alerts two days before campaign end (via mail and WhatsApp). 
+6. Maintain logs for upload, replacement, and removal acƟons. 
+7. No access to commercial or ﬁnancial data. 
+ 
+3. Core FuncƟonal Modules 
+3.1 Slot Management 
+ Centralized slot conﬁguraƟon for all TIME pages. 
+ Real-Ɵme view: Available / Booked / Pending / Expired. 
+ Auto-expiry of banners post-validity with backup auto-replacement. 
+ OpƟon to adjust slot rates dynamically by page type and duraƟon. 
+3.2 Banner Upload and ValidaƟon 
+ Supported formats: JPG, PNG, GIF , HTML5 (conﬁgurable). 
+ Size/dimension validaƟon on upload. 
+ Preview feature for Manager before approval. 
+ AI-based basic validaƟon (image dimension and inappropriate content check). 
+3.3 Workﬂow and AutomaƟon 
+ Fully automated request cycle: 
+Client Request → Manager Review → VP Approval → PV Sir Final Approval → IT 
+Deployment → Live Banner . 
+ Each stage triggers automaƟc mail & WhatsApp noƟﬁcaƟons. 
+ Auto-generaƟon of Release Order post payment and approval. 
+ Automated renewal reminders to clients before expiry. 
+3.4 Payment Gateway IntegraƟon 
+ Integrated secure gateway (Razorpay/Paytm). 
+ Supports full and installment payments. 
+ Auto-update payment status in Accounts dashboard. 
+ Payment conﬁrmaƟon triggers release order and IT upload noƟﬁcaƟon. 
+3.5 Reports and AnalyƟcs 
+ Graphical + Tabular dashboards for all roles. 
+ Filters by client, page, slot, and date. 
+ Key metrics: 
+o AcƟve / Expired campaigns 
+o Total clicks & CTR 
+o Slot uƟlizaƟon rate 
+o Revenue and payment status 
+ Export opƟons: Excel, PDF, CSV. 
+3.6 NoƟﬁcaƟons (Mail + WhatsApp) 
+ Triggers for: 
+o Slot booking, approval, payment conﬁrmaƟon 
+o Banner upload compleƟon 
+o Expiry reminders 
+o Payment due alerts 
+ Integrated via WhatsApp Business API and SMTP email. 
+ 
+4. Technical & Security Framework 
+ Role-Based Access Control (RBAC) for user-speciﬁc access. 
+ PCI-DSS compliant encrypƟon for payment data. 
+ AcƟvity logs for every acƟon (upload, approval, payment). 
+ Regular backups and data archiving for expired campaigns. 
+ Cloud-hosted, API-driven modular architecture for scalability. 
+ 
+5. Design and User Experience 
+ State-of-the-art responsive design (desktop & mobile). 
+ Clean dashboards for each role. 
+ Quick search, ﬁlters, and graphical summaries. 
+ Drag-and-drop slot preview for IT and Managers. 
+ 
+6. Key AutomaƟon Outcomes 
+ End-to-end automated approval ﬂow (no manual follow-ups). 
+ AutomaƟc banner placement and removal through IT integraƟon. 
+ Real-Ɵme noƟﬁcaƟons for all key acƟons. 
+ Centralized dashboards for transparency. 
+ Integrated payment and accounƟng without manual reconciliaƟon. 
+ 
+ 

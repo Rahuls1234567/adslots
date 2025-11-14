@@ -1,0 +1,184 @@
+Ad Banner Management System – Requirement Note (Optimized & Automation Focused)
+1. Objective
+To develop a fully automated Ad Banner Management System for TIME’s digital ecosystem — covering Main Page, Course Page, Webinar Pages, Student Login Pages, and Student Home Page.
+The platform should automate the entire workflow from slot creation → client request → approval → payment → banner upload → tracking & expiry management, with integrated notifications and reports.
+________________________________________
+2. Key Roles and Responsibilities
+A. Client
+•	Login via Phone Number and OTP.
+•	View available ad slots across TIME’s pages (with page name, slot position, dimensions, and sample preview).
+•	Raise ad placement request by selecting slot(s) and defining duration (start–end date).
+•	Upload banner, Purchase Order (PO), and Proposal Document during the request submission.
+Proposal Document Upload:
+After selecting slots, the client can upload a detailed proposal document before submitting the request.
+•	Receive commercial details shared by TIME Manager (amount, payment type, installment details).
+•	Make online payment via integrated Payment Gateway.
+•	Option to renew, pause, or extend an active banner.
+Post-Approval Uploads:
+•	After final approval, the client can raise a new banner upload request (updated creative or version change) from their dashboard.
+•	Once uploaded, the Manager, Vice President, and IT Execution Team are automatically notified.
+•	The new creative bypasses the full approval chain — only the Manager reviews and confirms it.
+•	Upon Manager approval, the IT Team directly uploads the creative, and the VP receives a notification for record-keeping.
+•	All such uploads are recorded in version control with timestamps and approval details.
+Static Sample Preview:
+•	Clients can preview how their banner will appear on different TIME pages using a static sample view environment.
+•	These preview pages replicate the actual site layout (without impacting live pages).
+•	Clients can verify positioning, dimensions, and aesthetics before final confirmation.
+Access performance reports:
+•	Total clicks and impressions
+•	CTR (Click-Through Rate)
+•	Page-wise performance summary
+________________________________________
+B. Manager
+•	Add Clients (GST, Address, Contact details).
+•	Define Slot Pricing and Validity Options (full/instalment/pay-later).
+•	Block slots manually if client cannot raise a request directly.
+•	Review and approve client banners, POs, and re-uploaded creatives.
+•	Generate quotation or proforma invoice automatically.
+•	Set installment breakup with date and amount.
+Creative Edit Access:
+•	The Manager can download, modify, and re-upload client-submitted banners or creatives for adjustments (e.g., resizing, text edits, compliance fixes).
+•	Version Control: Each modification is stored as a new version, maintaining complete edit history (versioned creative logs).
+•	The Manager can view and restore previous versions if required.
+•	Once the final creative version is approved, it proceeds through the standard workflow (VP → PV Sir → IT deployment).
+New Creative Upload Handling:
+•	When a client uploads a new creative post-approval, only the Manager needs to review and confirm it.
+•	If approved, the IT Team automatically replaces the old banner.
+•	The VP receives an informational alert about the update (no approval needed).
+•	This process ensures faster creative updates while maintaining control and accountability.
+Re-upload Notifications:
+•	Receives automatic notifications when a client uploads a new creative or modified version.
+•	Can review, edit, or reject the new submission with comments.
+Dashboard includes:
+•	Pending approvals
+•	Expiring ads
+•	Re-uploaded creatives awaiting review
+•	Revenue and collection status
+•	Slot utilization rate
+________________________________________
+C. Vice President
+•	Review Manager’s entries and approve/reject with comments.
+•	Dashboard summary of all campaigns: total approved, pending, and expired.
+•	Receives notifications when clients modify or replace approved creatives.
+•	For new creative uploads, receives an informational update only (no approval action required).
+•	Access consolidated financial and analytical reports.
+________________________________________
+D. PV Sir (Company Head)
+•	Final approval authority post VP review.
+•	Receives email with direct approval link for each ad.
+•	Dashboard showing:
+o	Total approved ads
+o	Ongoing campaigns
+o	Total revenue and pending dues
+________________________________________
+E. Accounts
+PO-Based Invoice Workflow:
+•	Client uploads a PO during request submission.
+•	Based on the PO, the Accounts team generates an official invoice.
+•	The generated invoice is uploaded as an attachment in the Accounts dashboard.
+•	The client makes payment based on this invoice.
+•	After successful payment, the client gains access to upload banners or creatives.
+•	Attach invoices generated from Tally.
+•	Track payments (full, installment, pay-later).
+•	Automated reconciliation between Payment Gateway and Tally.
+•	Receive alerts for missed/overdue payments.
+•	Access detailed payment reports per client and per slot.
+•	System to push the details back to Tally.
+________________________________________
+F. IT Team
+•	Define and manage Slot Master (page name, location, size, banner type).
+•	Receive automatic notification once PV Sir approves the ad or when a client re-upload occurs.
+•	Push approved or manager-approved creatives automatically to the respective slots.
+•	Maintain backup banners that replace expired ones automatically.
+•	Maintain sample preview pages for each slot configuration — replicating website layouts for client preview purposes.
+•	Receive expiry alerts two days before campaign end (via mail and WhatsApp).
+•	Maintain logs for upload, replacement, removal, and version changes.
+•	No access to commercial or financial data.
+________________________________________
+3. Core Functional Modules
+3.1 Slot Management
+•	Centralized slot configuration for all TIME pages.
+•	Real-time view: Available / Booked / Pending / Expired.
+•	Auto-expiry of banners post-validity with backup auto-replacement.
+•	Option to adjust slot rates dynamically by page type and duration.
+________________________________________
+3.2 Banner Upload and Validation
+•	Supported formats: JPG, PNG, GIF, HTML5 (configurable).
+•	Size/dimension validation on upload.
+•	Preview feature for Manager before approval.
+•	AI-based basic validation (image dimension and inappropriate content check).
+Post-Approval Upload Workflow:
+•	Clients can upload updated creatives through their dashboard even after approval.
+•	Uploaded creatives trigger notifications to Manager, IT, and VP.
+•	New uploads follow the modified approval path (Manager approval only).
+•	Upon confirmation, IT replaces the old creative in live slots.
+Version Tracking System:
+•	Every edit or re-upload creates a new version entry.
+•	Version history, timestamps, and user actions (Client/Manager edits) are recorded.
+•	Managers can view change history and revert to older versions when needed.
+________________________________________
+3.3 Workflow and Automation
+•	Fully automated request cycle:
+Client Request → Manager Review → VP Approval → PV Sir Final Approval → IT Deployment → Live Banner
+•	New Creative Upload Flow:
+Client Upload → Manager Review & Confirmation → IT Redeployment → VP Notification
+•	Each stage triggers automatic mail & WhatsApp notifications.
+•	Auto-generation of Release Order post payment and approval.
+•	Automated renewal reminders to clients before expiry.
+________________________________________
+3.4 Static Sample Preview Module
+•	Dedicated preview pages replicate real site layouts (Main Page, Course Page, etc.).
+•	Clients can see live-position simulation of their banners without affecting actual pages.
+•	Sample previews refresh automatically after re-uploads or approvals.
+•	Controlled by IT Team; only accessible to logged-in clients for their campaigns.
+________________________________________
+3.5 Payment Gateway Integration
+•	Integrated secure gateway (Razorpay/Paytm).
+•	Supports full and installment payments.
+•	Auto-update payment status in Accounts dashboard.
+•	Payment confirmation triggers release order and IT upload notification.
+________________________________________
+3.6 Reports and Analytics
+•	Graphical + Tabular dashboards for all roles.
+•	Filters by client, page, slot, and date.
+•	Key metrics:
+o	Active / Expired campaigns
+o	Total clicks & CTR
+o	Slot utilization rate
+o	Revenue and payment status
+•	Export options: Excel, PDF, CSV.
+________________________________________
+3.7 Notifications (Mail + WhatsApp)
+•	Triggers for:
+o	Slot booking, approval, payment confirmation
+o	Banner upload completion
+o	Client re-upload or creative change
+o	Expiry reminders
+o	Payment due alerts
+•	Integrated via WhatsApp Business API and SMTP email.
+________________________________________
+4. Technical & Security Framework
+•	Role-Based Access Control (RBAC) for user-specific access.
+•	PCI-DSS compliant encryption for payment data.
+•	Activity logs for every action (upload, approval, payment, re-upload).
+•	Version control repository for all creative changes.
+•	Static preview server isolated from live production.
+•	Regular backups and data archiving for expired campaigns.
+•	Cloud-hosted, API-driven modular architecture for scalability.
+________________________________________
+5. Design and User Experience
+•	State-of-the-art responsive design (desktop & mobile).
+•	Clean dashboards for each role.
+•	Quick search, filters, and graphical summaries.
+•	Drag-and-drop slot preview for IT and Managers.
+•	Static Preview Pages for clients to visualize banner placement safely.
+________________________________________
+6. Key Automation Outcomes
+•	End-to-end automated approval flow (no manual follow-ups).
+•	Automatic banner placement and removal through IT integration.
+•	Real-time notifications for all key actions and creative changes.
+•	Version-controlled creative management ensuring accountability.
+•	Static preview pages for client assurance before deployment.
+•	Integrated payment and accounting without manual reconciliation.
+•	Transparent and traceable creative lifecycle with audit-ready version history.
+
