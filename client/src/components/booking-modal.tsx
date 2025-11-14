@@ -20,7 +20,6 @@ import type { Slot } from "@shared/schema";
 const bookingSchema = z.object({
   startDate: z.date({ required_error: "Start date is required" }),
   endDate: z.date({ required_error: "End date is required" }),
-  paymentType: z.enum(["full", "installment", "pay_later"]),
 }).refine(data => data.endDate > data.startDate, {
   message: "End date must be after start date",
   path: ["endDate"],
@@ -43,7 +42,6 @@ export function BookingModal({ slot, userId, open, onOpenChange, startDate, endD
     defaultValues: {
       startDate: startDate ? new Date(startDate) : undefined,
       endDate: endDate ? new Date(endDate) : undefined,
-      paymentType: "full",
     },
   });
 
@@ -53,7 +51,6 @@ export function BookingModal({ slot, userId, open, onOpenChange, startDate, endD
       form.reset({
         startDate: new Date(startDate),
         endDate: new Date(endDate),
-        paymentType: "full",
       });
     }
   }, [startDate, endDate, open, form]);
@@ -67,7 +64,6 @@ export function BookingModal({ slot, userId, open, onOpenChange, startDate, endD
         slotId: slot.id,
         startDate: format(data.startDate, "yyyy-MM-dd"),
         endDate: format(data.endDate, "yyyy-MM-dd"),
-        paymentType: data.paymentType,
         totalAmount: slot.pricing,
       });
     },
@@ -197,28 +193,7 @@ export function BookingModal({ slot, userId, open, onOpenChange, startDate, endD
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="paymentType"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Payment Type</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger data-testid="select-payment-type">
-                          <SelectValue placeholder="Select payment type" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="full">Full Payment</SelectItem>
-                        <SelectItem value="installment">Installment</SelectItem>
-                        <SelectItem value="pay_later">Pay Later</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {/* Payment type removed as per requirement; defaults to 'full' in request */}
 
               <div className="flex justify-end gap-2 pt-4">
                 <Button

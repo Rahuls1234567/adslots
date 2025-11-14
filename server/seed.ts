@@ -25,66 +25,80 @@ async function seed() {
     }
   }
 
-  // Create some sample slots
-  const slots = [
-    {
-      pageType: "main" as const,
-      mediaType: "website" as const,
-      position: "header",
-      dimensions: "728x90",
-      pricing: "50000",
-      status: "available" as const,
-    },
-    {
-      pageType: "course" as const,
-      mediaType: "website" as const,
-      position: "sidebar",
-      dimensions: "300x250",
-      pricing: "30000",
-      status: "available" as const,
-    },
-    {
-      pageType: "webinar" as const,
-      mediaType: "website" as const,
-      position: "footer",
-      dimensions: "728x90",
-      pricing: "25000",
-      status: "available" as const,
-    },
-    {
-      pageType: "student_login" as const,
-      mediaType: "website" as const,
-      position: "sidebar",
-      dimensions: "160x600",
-      pricing: "40000",
-      status: "available" as const,
-    },
-    {
-      pageType: "main" as const,
-      mediaType: "mobile" as const,
-      position: "banner",
-      dimensions: "320x50",
-      pricing: "35000",
-      status: "available" as const,
-    },
-    {
-      pageType: "main" as const,
-      mediaType: "magazine" as const,
-      position: "full-page",
-      dimensions: "210x297mm",
-      pricing: "100000",
-      status: "available" as const,
-      magazinePageNumber: 2,
-    },
-  ];
-
-  for (const slot of slots) {
+  // Website: Landing (main) 12 slots
+  for (let i = 1; i <= 12; i++) {
     try {
-      await storage.createSlot(slot);
-      console.log(`Created slot: ${slot.pageType} - ${slot.position}`);
-    } catch (error) {
-      console.error(`Error creating slot:`, error);
-    }
+      await storage.createSlot({
+        pageType: "main",
+        mediaType: "website",
+        position: `slot-${i}`,
+        dimensions: i % 3 === 0 ? "300x250" : "728x90",
+        pricing: String(30000 + i * 1000),
+        status: "available",
+      });
+      console.log(`Created website main slot-${i}`);
+    } catch (error) {}
+  }
+
+  // Website: Student Home 12 slots
+  for (let i = 1; i <= 12; i++) {
+    try {
+      await storage.createSlot({
+        pageType: "student_home",
+        mediaType: "website",
+        position: `slot-${i}`,
+        dimensions: i % 2 === 0 ? "300x250" : "728x90",
+        pricing: String(28000 + i * 900),
+        status: "available",
+      });
+      console.log(`Created website student_home slot-${i}`);
+    } catch (error) {}
+  }
+
+  // Website: Login page 2 slots
+  for (let i = 1; i <= 2; i++) {
+    try {
+      await storage.createSlot({
+        pageType: "student_login",
+        mediaType: "website",
+        position: `slot-${i}`,
+        dimensions: "300x250",
+        pricing: String(25000 + i * 2000),
+        status: "available",
+      });
+      console.log(`Created website student_login slot-${i}`);
+    } catch (error) {}
+  }
+
+  // Mobile App: 2 slots
+  for (let i = 1; i <= 2; i++) {
+    try {
+      await storage.createSlot({
+        pageType: "main",
+        mediaType: "mobile",
+        position: `mobile-slot-${i}`,
+        dimensions: i === 1 ? "320x50" : "300x250",
+        pricing: String(35000 + i * 3000),
+        status: "available",
+      });
+      console.log(`Created mobile slot-${i}`);
+    } catch (error) {}
+  }
+
+  // Magazine: 6 slots (pages)
+  for (let i = 1; i <= 6; i++) {
+    try {
+      await storage.createSlot({
+        pageType: "main",
+        mediaType: "magazine",
+        position: i === 1 ? "cover-inner" : "inside",
+        dimensions: "210x297mm",
+        pricing: String(90000 + i * 5000),
+        status: "available",
+        magazinePageNumber: i,
+      });
+      console.log(`Created magazine page ${i}`);
+    } catch (error) {}
   }
 
   console.log("Seeding complete!");

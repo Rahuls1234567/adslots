@@ -1,48 +1,234 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Shield, CheckCircle, XCircle, TrendingUp } from "lucide-react";
-import type { Booking, Slot } from "@shared/schema";
+import { queryClient } from "@/lib/queryClient";
+import { Shield, CheckCircle, Clock, TrendingUp, AlertCircle } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+
+interface ReleaseOrderEntry {
+  releaseOrder: any;
+  items: any[];
+  workOrder?: any;
+  client?: any;
+  createdBy?: any;
+}
+
+const formatCurrency = (value: number | string | null | undefined) => {
+  const num = Number(value ?? 0);
+  return `₹${num.toLocaleString()}`;
+};
+
+const humanize = (value?: string | null) => (value ? value.replace(/_/g, " ") : "");
 
 export default function PVSirDashboard() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const [selectedEntry, setSelectedEntry] = useState<ReleaseOrderEntry | null>(null);
+  const [rejectEntry, setRejectEntry] = useState<ReleaseOrderEntry | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
-  const { data: bookings = [], isLoading: bookingsLoading } = useQuery<Booking[]>({
-    queryKey: ["/api/bookings"],
+  const { data: pending = [], isLoading: loadingPending } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "pending_pv_review" }],
   });
 
-  const { data: slots = [] } = useQuery<Slot[]>({
-    queryKey: ["/api/slots"],
+  const { data: accepted = [] } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "accepted" }],
   });
 
-  const pendingBookings = bookings.filter(b => b.status === "pending_pv");
-  const approvedBookings = bookings.filter(b => ["pending_payment", "pending_deployment", "active"].includes(b.status));
-  const allApproved = bookings.filter(b => !["pending_manager", "pending_vp", "pending_pv", "rejected"].includes(b.status));
-
-  const updateBookingStatusMutation = useMutation({
-    mutationFn: async ({ bookingId, status }: { bookingId: number; status: string }) => {
-      return await apiRequest("PATCH", `/api/bookings/${bookingId}/status`, { status });
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/bookings"] });
-      toast({
-        title: "Booking Updated",
-        description: "The booking status has been updated.",
+  const approveMutation = useMutation({
+    mutationFn: async (releaseOrderId: number) => {
+      const res = await fetch(`/api/release-orders/${releaseOrderId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorId: user?.id }),
       });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "pending_pv_review" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "accepted" }] });
+      toast({ title: "Release Order accepted", description: "Accounts and IT have been notified." });
     },
     onError: (error: any) => {
       toast({
-        title: "Error",
-        description: error.message || "Failed to update booking",
+        title: "Approval failed",
+        description: error?.message || "Could not update the release order",
         variant: "destructive",
       });
     },
   });
+
+  const rejectMutation = useMutation({
+    mutationFn: async ({ releaseOrderId, reason }: { releaseOrderId: number; reason: string }) => {
+      const res = await fetch(`/api/release-orders/${releaseOrderId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actorId: user?.id, reason }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "pending_pv_review" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "pending_vp_review" }] });
+      toast({ title: "Release Order rejected", description: "Sent to VP for review. VP will review and forward to manager if needed." });
+      setRejectEntry(null);
+      setRejectReason("");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Rejection failed",
+        description: error?.message || "Could not update the release order",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const renderPrimaryDetails = (entry: ReleaseOrderEntry) => {
+    const { releaseOrder, workOrder, client, createdBy } = entry;
+    const totalAmount = formatCurrency(workOrder?.totalAmount);
+    const paymentType = workOrder?.paymentMode ? humanize(workOrder.paymentMode) : "—";
+    const paymentStatus = humanize(releaseOrder.paymentStatus);
+    const createdAt = releaseOrder.issuedAt ? new Date(releaseOrder.issuedAt).toLocaleString() : "—";
+
+    return (
+      <div className="grid gap-3 text-sm">
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <div className="text-muted-foreground">Business School</div>
+            <div className="font-medium">{workOrder?.businessSchoolName || client?.businessSchoolName || client?.name || `Client #${workOrder?.clientId}`}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Client</div>
+            <div className="font-medium">{client?.name || workOrder?.contactName || `Client #${workOrder?.clientId}`}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <div className="text-muted-foreground">Order Amount</div>
+            <div className="font-medium">{totalAmount}</div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Payment Type</div>
+            <div className="font-medium capitalize">{paymentType}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <div className="text-muted-foreground">Payment Status</div>
+            <div className={releaseOrder.paymentStatus === "completed" ? "font-medium text-emerald-600" : "font-medium text-orange-600"}>
+              {paymentStatus || "Unknown"}
+            </div>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Created / Issued</div>
+            <div className="font-medium">{createdAt}</div>
+            {createdBy?.name ? <div className="text-xs text-muted-foreground">By {createdBy.name}</div> : null}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-muted-foreground">Purchase Order</div>
+          {workOrder?.poUrl ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.open(`/uploads/${workOrder.poUrl}`, "_blank", "noopener")}
+            >
+              View PO
+            </Button>
+          ) : (
+            <div>Not uploaded</div>
+          )}
+        </div>
+      {releaseOrder.rejectionReason && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-destructive">
+          <div className="font-semibold">Latest rejection note</div>
+          <div className="mt-1 whitespace-pre-wrap">{releaseOrder.rejectionReason}</div>
+          {releaseOrder.rejectedAt && (
+            <div className="text-xs mt-2 text-destructive/80">
+              Updated {new Date(releaseOrder.rejectedAt).toLocaleString()}
+            </div>
+          )}
+        </div>
+      )}
+      </div>
+    );
+  };
+
+  const renderReleaseOrders = (rows: ReleaseOrderEntry[], showActions = false) => {
+    if (rows.length === 0) {
+      return (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">No release orders to display.</CardContent>
+        </Card>
+      );
+    }
+
+    return rows.map((entry) => (
+      <Card
+        key={entry.releaseOrder.id}
+        className="cursor-pointer hover:shadow-md transition"
+        onClick={() => setSelectedEntry(entry)}
+      >
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-lg">Release Order #{entry.releaseOrder.id}</CardTitle>
+            <CardDescription>WO #{entry.releaseOrder.workOrderId} • {formatCurrency(entry.workOrder?.totalAmount)}</CardDescription>
+            <div className="text-xs text-muted-foreground mt-1">
+              Client: {entry.client?.name || entry.workOrder?.contactName || `Client #${entry.workOrder?.clientId}`}
+            </div>
+          </div>
+          <Badge variant="secondary" className="capitalize">{humanize(entry.releaseOrder.status)}</Badge>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {renderPrimaryDetails(entry)}
+
+          {showActions && (
+            <div className="flex justify-end gap-2">
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRejectEntry(entry);
+                  setRejectReason("");
+                }}
+                disabled={rejectMutation.isPending}
+              >
+                Reject
+              </Button>
+              <Button
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  approveMutation.mutate(entry.releaseOrder.id);
+                }}
+                disabled={approveMutation.isPending}
+              >
+                {approveMutation.isPending ? "Accepting…" : "Approve & Finalize"}
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    ));
+  };
+
+  const pendingCount = pending.length;
+  const acceptedCount = accepted.length;
+  const ongoingCount = accepted.filter((entry) => entry.releaseOrder.paymentStatus !== "completed").length;
+  const totalRevenue = accepted.reduce((sum, entry) => sum + Number(entry.workOrder?.totalAmount ?? 0), 0);
+  const pendingDues = accepted
+    .filter((entry) => entry.releaseOrder.paymentStatus !== "completed")
+    .reduce((sum, entry) => sum + Number(entry.workOrder?.totalAmount ?? 0), 0);
 
   return (
     <div className="space-y-8 p-6">
@@ -51,39 +237,46 @@ export default function PVSirDashboard() {
         <p className="text-muted-foreground">Final executive approval for high-value campaigns</p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="grid gap-6 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Pending Final Approval</CardTitle>
             <Shield className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{pendingBookings.length}</div>
-            <p className="text-xs text-muted-foreground">Awaiting your decision</p>
+            <div className="text-2xl font-bold">{pendingCount}</div>
           </CardContent>
         </Card>
-
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Approved by You</CardTitle>
+            <CardTitle className="text-sm font-medium">Total Approved Ads</CardTitle>
             <CheckCircle className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{approvedBookings.length}</div>
-            <p className="text-xs text-muted-foreground">In accounts/IT pipeline</p>
+            <div className="text-2xl font-bold">{acceptedCount}</div>
           </CardContent>
         </Card>
-
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+            <CardTitle className="text-sm font-medium">Ongoing Campaigns</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{ongoingCount}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Financial Snapshot</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              ₹{allApproved.reduce((sum, b) => sum + parseFloat(b.totalAmount.toString()), 0).toLocaleString()}
+            <div className="text-xs text-muted-foreground">Total Revenue</div>
+            <div className="text-xl font-bold">{formatCurrency(totalRevenue)}</div>
+            <div className="mt-3 text-xs text-muted-foreground flex items-center gap-2">
+              <AlertCircle className="h-3 w-3" />
+              Pending Dues: <span className="font-semibold text-orange-600">{formatCurrency(pendingDues)}</span>
             </div>
-            <p className="text-xs text-muted-foreground">From approved campaigns</p>
           </CardContent>
         </Card>
       </div>
@@ -91,132 +284,124 @@ export default function PVSirDashboard() {
       <Tabs defaultValue="pending" className="w-full">
         <TabsList>
           <TabsTrigger value="pending" data-testid="tab-pending">
-            Pending Approvals ({pendingBookings.length})
+            Pending ({pendingCount})
           </TabsTrigger>
-          <TabsTrigger value="approved" data-testid="tab-approved">
-            Approved ({approvedBookings.length})
+          <TabsTrigger value="accepted" data-testid="tab-accepted">
+            Accepted ({acceptedCount})
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="pending" className="space-y-4">
-          {bookingsLoading ? (
+          {loadingPending ? (
             <div className="space-y-3">
               {[...Array(3)].map((_, i) => (
                 <Skeleton key={i} className="h-32 w-full" />
               ))}
             </div>
-          ) : pendingBookings.length === 0 ? (
-            <Card>
-              <CardContent className="flex items-center justify-center py-12">
-                <p className="text-muted-foreground">No pending approvals</p>
-              </CardContent>
-            </Card>
           ) : (
-            pendingBookings.map((booking) => {
-              const slot = slots.find(s => s.id === booking.slotId);
-              return (
-                <Card key={booking.id} data-testid={`card-booking-${booking.id}`}>
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <CardTitle className="text-lg">Booking #{booking.id}</CardTitle>
-                        <CardDescription>
-                          {slot ? `${slot.mediaType} - ${slot.pageType} - ${slot.position}` : "Slot details unavailable"}
-                        </CardDescription>
-                      </div>
-                      <Badge>Approved by VP</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="text-muted-foreground">Start Date:</span>
-                          <p className="font-medium">{new Date(booking.startDate).toLocaleDateString()}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">End Date:</span>
-                          <p className="font-medium">{new Date(booking.endDate).toLocaleDateString()}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Payment Type:</span>
-                          <p className="font-medium capitalize">{booking.paymentType.replace(/_/g, " ")}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Total Amount:</span>
-                          <p className="font-bold text-primary">₹{booking.totalAmount}</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2 pt-2 border-t">
-                        <Button
-                          variant="destructive"
-                          onClick={() => updateBookingStatusMutation.mutate({ bookingId: booking.id, status: "rejected" })}
-                          disabled={updateBookingStatusMutation.isPending}
-                          data-testid={`button-reject-${booking.id}`}
-                        >
-                          <XCircle className="mr-2 h-4 w-4" />
-                          Reject
-                        </Button>
-                        <Button
-                          onClick={() => updateBookingStatusMutation.mutate({ bookingId: booking.id, status: "pending_payment" })}
-                          disabled={updateBookingStatusMutation.isPending}
-                          data-testid={`button-approve-${booking.id}`}
-                        >
-                          <CheckCircle className="mr-2 h-4 w-4" />
-                          Final Approve & Send to Accounts
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
+            renderReleaseOrders(pending, true)
           )}
         </TabsContent>
 
-        <TabsContent value="approved" className="space-y-4">
-          {approvedBookings.length === 0 ? (
-            <Card>
-              <CardContent className="flex items-center justify-center py-12">
-                <p className="text-muted-foreground">No approved bookings</p>
-              </CardContent>
-            </Card>
-          ) : (
-            approvedBookings.map((booking) => {
-              const slot = slots.find(s => s.id === booking.slotId);
-              return (
-                <Card key={booking.id} data-testid={`card-booking-approved-${booking.id}`}>
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <CardTitle className="text-lg">Booking #{booking.id}</CardTitle>
-                        <CardDescription>
-                          {slot ? `${slot.mediaType} - ${slot.pageType} - ${slot.position}` : "Slot details unavailable"}
-                        </CardDescription>
-                      </div>
-                      <Badge>{booking.status.replace(/_/g, " ")}</Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <span className="text-muted-foreground">Duration:</span>
-                        <p className="font-medium">
-                          {new Date(booking.startDate).toLocaleDateString()} - {new Date(booking.endDate).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Amount:</span>
-                        <p className="font-bold text-primary">₹{booking.totalAmount}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          )}
+        <TabsContent value="accepted" className="space-y-4">
+          {renderReleaseOrders(accepted, false)}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!selectedEntry} onOpenChange={(open) => !open && setSelectedEntry(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Release Order {selectedEntry ? `#${selectedEntry.releaseOrder.id}` : ""}</DialogTitle>
+          </DialogHeader>
+          {selectedEntry ? (
+            <div className="space-y-4">
+              {renderPrimaryDetails(selectedEntry)}
+              <div className="space-y-2">
+                <div className="text-muted-foreground">Campaign Items</div>
+                <div className="space-y-2 max-h-60 overflow-auto border rounded p-3 bg-muted/40">
+                  {selectedEntry.items.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No items linked to this release order.</div>
+                  ) : (
+                    selectedEntry.items.map((item) => (
+                      <div key={item.id} className="border rounded-md p-2 text-xs">
+                        <div className="font-medium">
+                          {item.slot
+                            ? `${item.slot.mediaType} • ${item.slot.pageType} • ${item.slot.position}`
+                            : `Work Order Item #${item.workOrderItemId}`}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {item.startDate} → {item.endDate}
+                        </div>
+                        {item.bannerUrl ? (
+                          <Button
+                            variant="link"
+                            className="h-auto p-0"
+                            onClick={() => window.open(item.bannerUrl, "_blank", "noopener")}
+                          >
+                            View Banner
+                          </Button>
+                        ) : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="destructive"
+                  onClick={() => {
+                    setRejectEntry(selectedEntry);
+                    setRejectReason("");
+                  }}
+                  disabled={rejectMutation.isPending}
+                >
+                  Reject
+                </Button>
+                <Button onClick={() => approveMutation.mutate(selectedEntry.releaseOrder.id)} disabled={approveMutation.isPending}>
+                  {approveMutation.isPending ? "Accepting…" : "Approve & Finalize"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!rejectEntry} onOpenChange={(open) => { if (!open) { setRejectEntry(null); setRejectReason(""); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reject Release Order</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              Add a note so managers know what to adjust before resubmitting.
+            </p>
+            {rejectEntry?.releaseOrder?.rejectionReason && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-destructive">
+                <div className="font-semibold">Previous note</div>
+                <div className="mt-1 whitespace-pre-wrap">{rejectEntry.releaseOrder.rejectionReason}</div>
+              </div>
+            )}
+            <Textarea
+              value={rejectReason}
+              onChange={(event) => setRejectReason(event.target.value)}
+              placeholder="Reason for rejection"
+              rows={4}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => { setRejectEntry(null); setRejectReason(""); }} disabled={rejectMutation.isPending}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => rejectEntry && rejectMutation.mutate({ releaseOrderId: rejectEntry.releaseOrder.id, reason: rejectReason })}
+                disabled={rejectMutation.isPending || !rejectReason.trim()}
+              >
+                {rejectMutation.isPending ? "Rejecting…" : "Reject"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

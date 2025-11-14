@@ -33,6 +33,9 @@ export function DateRangePicker({ startDate, endDate, onDateChange }: DateRangeP
   const handleDateClick = (day: number) => {
     const clickedDate = new Date(selectedYear, selectedMonth, day);
     clickedDate.setHours(0, 0, 0, 0); // Normalize to start of day
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (clickedDate < today) return; // disallow selecting past dates
     
     if (!startDate || (startDate && endDate)) {
       // Start new selection
@@ -90,6 +93,15 @@ export function DateRangePicker({ startDate, endDate, onDateChange }: DateRangeP
   const firstDayOfMonth = getFirstDayOfMonth(selectedYear, selectedMonth);
   const daysArray = Array.from({ length: daysInMonth }, (_, i) => i + 1);
   const emptyDays = Array.from({ length: firstDayOfMonth }, (_, i) => i);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const isPrevDisabled = () => {
+    const prevMonth = selectedMonth === 0 ? 11 : selectedMonth - 1;
+    const prevYear = selectedMonth === 0 ? selectedYear - 1 : selectedYear;
+    const lastDayPrev = new Date(prevYear, prevMonth + 1, 0);
+    lastDayPrev.setTime(new Date(prevYear, prevMonth, lastDayPrev.getDate()).setHours(0,0,0,0));
+    return lastDayPrev < today;
+  };
 
   return (
     <Card>
@@ -105,6 +117,7 @@ export function DateRangePicker({ startDate, endDate, onDateChange }: DateRangeP
             variant="outline"
             size="icon"
             onClick={previousMonth}
+            disabled={isPrevDisabled()}
             data-testid="button-prev-month"
             className="h-8 w-8"
           >
@@ -165,21 +178,28 @@ export function DateRangePicker({ startDate, endDate, onDateChange }: DateRangeP
             <div key={`empty-${i}`} className="p-1" />
           ))}
           
-          {daysArray.map((day) => (
-            <button
-              key={day}
-              onClick={() => handleDateClick(day)}
-              className={cn(
-                "aspect-square p-1 text-sm rounded-md transition-colors hover-elevate",
-                isDateInRange(day) && "bg-primary text-primary-foreground",
-                (isStartDate(day) || isEndDate(day)) && "bg-primary text-primary-foreground font-bold",
-                !isDateInRange(day) && "hover:bg-accent"
-              )}
-              data-testid={`day-${day}`}
-            >
-              {day}
-            </button>
-          ))}
+          {daysArray.map((day) => {
+            const d = new Date(selectedYear, selectedMonth, day);
+            d.setHours(0,0,0,0);
+            const past = d < today;
+            return (
+              <button
+                key={day}
+                onClick={() => handleDateClick(day)}
+                disabled={past}
+                className={cn(
+                  "aspect-square p-1 text-sm rounded-md transition-colors",
+                  isDateInRange(day) && "bg-primary text-primary-foreground",
+                  (isStartDate(day) || isEndDate(day)) && "bg-primary text-primary-foreground font-bold",
+                  !past && !isDateInRange(d.getDate()) && "hover:bg-accent",
+                  past && "opacity-40 cursor-not-allowed"
+                )}
+                data-testid={`day-${day}`}
+              >
+                {day}
+              </button>
+            );
+          })}
         </div>
 
         {startDate && (

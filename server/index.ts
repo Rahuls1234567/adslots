@@ -1,6 +1,10 @@
+import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
+import { createServer } from "http";
 import { registerRoutes } from "./routes";
+import path from "path";
 import { setupVite, serveStatic, log } from "./vite";
+import { cronService } from "./services/cron";
 
 const app = express();
 
@@ -49,6 +53,9 @@ app.use((req, res, next) => {
 (async () => {
   registerRoutes(app);
 
+  // Serve locally stored uploads
+  app.use('/uploads', express.static(path.resolve(process.cwd(), 'server', 'uploads')));
+
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
@@ -60,8 +67,11 @@ app.use((req, res, next) => {
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
+  // Create a single HTTP server so Vite HMR can attach without port conflicts
+  const server = createServer(app);
+
   if (app.get("env") === "development") {
-    await setupVite(app, app);
+    await setupVite(app, server);
   } else {
     serveStatic(app);
   }
@@ -71,11 +81,22 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  app.listen({
-    port,
-    host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+  server.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
+    // Start cron jobs for automated tasks
+    cronService.start();
+  });
+
+  // Graceful shutdown
+  process.on('SIGTERM', () => {
+    log('SIGTERM signal received: closing HTTP server');
+    cronService.stop();
+    process.exit(0);
+  });
+
+  process.on('SIGINT', () => {
+    log('SIGINT signal received: closing HTTP server');
+    cronService.stop();
+    process.exit(0);
   });
 })();

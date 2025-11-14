@@ -12,9 +12,15 @@ import {
   invoices, type Invoice, type InsertInvoice,
   analytics, type Analytics, type InsertAnalytics,
   notifications, type Notification, type InsertNotification,
-  versionHistory, type VersionHistory, type InsertVersionHistory
+  versionHistory, type VersionHistory, type InsertVersionHistory,
+  workOrders, type WorkOrder, type InsertWorkOrder,
+  workOrderItems, type WorkOrderItem, type InsertWorkOrderItem,
+  releaseOrders, type ReleaseOrder, type InsertReleaseOrder,
+  releaseOrderItems, type ReleaseOrderItem, type InsertReleaseOrderItem,
+  activityLogs, type ActivityLog, type InsertActivityLog,
+  deployments, type Deployment, type InsertDeployment
 } from "@shared/schema";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -73,6 +79,21 @@ export interface IStorage {
   // Invoices
   createInvoice(invoice: InsertInvoice): Promise<Invoice>;
   getInvoicesByBooking(bookingId: number): Promise<Invoice[]>;
+
+  // Work Orders
+  createWorkOrder(data: InsertWorkOrder): Promise<WorkOrder>;
+  addWorkOrderItems(items: InsertWorkOrderItem[]): Promise<WorkOrderItem[]>;
+  getWorkOrder(id: number): Promise<WorkOrder | undefined>;
+  getWorkOrderItems(workOrderId: number): Promise<WorkOrderItem[]>;
+  updateWorkOrder(id: number, data: Partial<InsertWorkOrder>): Promise<WorkOrder | undefined>;
+  updateWorkOrderItem(id: number, data: Partial<InsertWorkOrderItem>): Promise<WorkOrderItem | undefined>;
+  recalcWorkOrderTotal(id: number): Promise<void>;
+
+  // Release Orders
+  createReleaseOrder(data: InsertReleaseOrder): Promise<ReleaseOrder>;
+  addReleaseOrderItems(items: InsertReleaseOrderItem[]): Promise<ReleaseOrderItem[]>;
+  getReleaseOrders(): Promise<ReleaseOrder[]>;
+  getReleaseOrder(id: number): Promise<ReleaseOrder | undefined>;
   
   // Analytics
   createAnalytics(analytics: InsertAnalytics): Promise<Analytics>;
@@ -86,6 +107,16 @@ export interface IStorage {
   // Version History
   getVersionHistory(bannerId: number): Promise<VersionHistory[]>;
   createVersionHistory(version: InsertVersionHistory): Promise<VersionHistory>;
+  
+  // Activity logs
+  createActivityLog(log: InsertActivityLog): Promise<ActivityLog>;
+  getActivityLogs(limit?: number): Promise<ActivityLog[]>;
+  
+  // Deployments
+  createDeployment(deployment: InsertDeployment): Promise<Deployment>;
+  getDeployment(id: number): Promise<Deployment | undefined>;
+  getDeployments(filters?: { releaseOrderId?: number; workOrderItemId?: number; status?: string }): Promise<Deployment[]>;
+  updateDeployment(id: number, deployment: Partial<InsertDeployment>): Promise<Deployment | undefined>;
 }
 
 export class DbStorage implements IStorage {
@@ -331,6 +362,66 @@ export class DbStorage implements IStorage {
     return await db.select().from(invoices).where(eq(invoices.bookingId, bookingId));
   }
 
+  // Work Orders
+  async createWorkOrder(data: InsertWorkOrder): Promise<WorkOrder> {
+    const result = await db.insert(workOrders).values(data).returning();
+    return result[0];
+  }
+
+  async addWorkOrderItems(items: InsertWorkOrderItem[]): Promise<WorkOrderItem[]> {
+    const result = await db.insert(workOrderItems).values(items).returning();
+    return result;
+  }
+
+  async getWorkOrder(id: number): Promise<WorkOrder | undefined> {
+    const result = await db.select().from(workOrders).where(eq(workOrders.id, id));
+    return result[0];
+  }
+
+  async getWorkOrderItems(workOrderId: number): Promise<WorkOrderItem[]> {
+    return await db.select().from(workOrderItems).where(eq(workOrderItems.workOrderId, workOrderId));
+  }
+
+  async updateWorkOrder(id: number, data: Partial<InsertWorkOrder>): Promise<WorkOrder | undefined> {
+    const result = await db.update(workOrders).set(data).where(eq(workOrders.id, id)).returning();
+    return result[0];
+  }
+
+  async updateWorkOrderItem(id: number, data: Partial<InsertWorkOrderItem>): Promise<WorkOrderItem | undefined> {
+    const result = await db.update(workOrderItems).set(data).where(eq(workOrderItems.id, id)).returning();
+    return result[0];
+  }
+
+  async recalcWorkOrderTotal(id: number): Promise<void> {
+    const items = await this.getWorkOrderItems(id);
+    const base = items.reduce((sum, it) => sum + Number(it.subtotal as any), 0);
+    const wo = await this.getWorkOrder(id);
+    const gst = wo ? Number((wo as any).gstPercent || 0) : 0;
+    const total = base + (base * gst) / 100;
+    await db.update(workOrders).set({ totalAmount: String(total) }).where(eq(workOrders.id, id));
+  }
+
+  // Release Orders
+  async createReleaseOrder(data: InsertReleaseOrder): Promise<ReleaseOrder> {
+    const result = await db.insert(releaseOrders).values(data).returning();
+    return result[0];
+  }
+
+  async addReleaseOrderItems(items: InsertReleaseOrderItem[]): Promise<ReleaseOrderItem[]> {
+    const result = await db.insert(releaseOrderItems).values(items).returning();
+    return result;
+  }
+
+  async getReleaseOrders(): Promise<ReleaseOrder[]> {
+    return await db.select().from(releaseOrders).orderBy(desc(releaseOrders.issuedAt));
+    
+  }
+
+  async getReleaseOrder(id: number): Promise<ReleaseOrder | undefined> {
+    const result = await db.select().from(releaseOrders).where(eq(releaseOrders.id, id));
+    return result[0];
+  }
+
   // Analytics
   async createAnalytics(analytics: InsertAnalytics): Promise<Analytics> {
     const result = await db.insert(analytics).values(analytics).returning();
@@ -366,6 +457,55 @@ export class DbStorage implements IStorage {
 
   async createVersionHistory(version: InsertVersionHistory): Promise<VersionHistory> {
     const result = await db.insert(versionHistory).values(version).returning();
+    return result[0];
+  }
+
+  // Activity logs
+  async createActivityLog(log: InsertActivityLog): Promise<ActivityLog> {
+    const result = await db.insert(activityLogs).values(log).returning();
+    return result[0];
+  }
+
+  async getActivityLogs(limit = 200): Promise<ActivityLog[]> {
+    const rows = await db.select().from(activityLogs).orderBy(desc(activityLogs.createdAt));
+    return rows.slice(0, limit);
+  }
+
+  // Deployments
+  async createDeployment(deployment: InsertDeployment): Promise<Deployment> {
+    const result = await db.insert(deployments).values(deployment).returning();
+    return result[0];
+  }
+
+  async getDeployment(id: number): Promise<Deployment | undefined> {
+    const result = await db.select().from(deployments).where(eq(deployments.id, id));
+    return result[0];
+  }
+
+  async getDeployments(filters?: { releaseOrderId?: number; workOrderItemId?: number; status?: string }): Promise<Deployment[]> {
+    const conditions = [];
+    
+    if (filters?.releaseOrderId) {
+      conditions.push(eq(deployments.releaseOrderId, filters.releaseOrderId));
+    }
+    if (filters?.workOrderItemId) {
+      conditions.push(eq(deployments.workOrderItemId, filters.workOrderItemId));
+    }
+    if (filters?.status) {
+      conditions.push(eq(deployments.status, filters.status as any));
+    }
+    
+    if (conditions.length > 0) {
+      const rows = await db.select().from(deployments).where(and(...conditions)).orderBy(desc(deployments.deployedAt));
+      return rows;
+    }
+    
+    const rows = await db.select().from(deployments).orderBy(desc(deployments.deployedAt));
+    return rows;
+  }
+
+  async updateDeployment(id: number, deployment: Partial<InsertDeployment>): Promise<Deployment | undefined> {
+    const result = await db.update(deployments).set(deployment).where(eq(deployments.id, id)).returning();
     return result[0];
   }
 }

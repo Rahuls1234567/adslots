@@ -1,37 +1,82 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { insertSlotSchema } from "@shared/schema";
+// Define a client-only schema to avoid importing server/drizzle code in the browser
 import { z } from "zod";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardCheck, AlertCircle, TrendingUp, DollarSign, Plus, CheckCircle, XCircle } from "lucide-react";
+import { ClipboardCheck, AlertCircle, TrendingUp, DollarSign, Plus } from "lucide-react";
 import type { Booking, Slot } from "@shared/schema";
+import { useLocation } from "wouter";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { useAuth } from "@/lib/auth-context";
 
-const slotFormSchema = insertSlotSchema.extend({
+const humanize = (value?: string | null) => {
+  if (!value) return "—";
+  return value.replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+};
+
+const PAGE_LABELS: Record<string, string> = {
+  main: "Landing page",
+  student_home: "Student home page",
+  student_login: "Login page",
+  aimcat_results_analysis: "AIMCAT results and analysis page",
+  chat_pages: "Chat pages",
+};
+
+const slotFormSchema = z.object({
+  mediaType: z.enum(["website", "mobile", "email", "magazine"]),
+  pageType: z.string().min(1),
+  position: z.string().min(1),
+  dimensions: z.string().min(1),
   pricing: z.coerce.number().positive("Price must be positive"),
+  status: z.enum(["available", "pending"]).default("available"),
 });
 
 export default function ManagerDashboard() {
   const [createSlotOpen, setCreateSlotOpen] = useState(false);
   const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const { user } = useAuth();
+  const [blockOpen, setBlockOpen] = useState(false);
+  const [blockForm, setBlockForm] = useState<{ slotId?: number; reason?: string; start?: string; end?: string; mediaType?: "website" | "mobile" | "magazine" | "email"; pageType?: string }>({});
+  const [blockStartDate, setBlockStartDate] = useState<Date | null>(null);
+  const [blockEndDate, setBlockEndDate] = useState<Date | null>(null);
+
+  // Load all slots for dropdown selection
+  const { data: allSlots = [] } = useQuery<Slot[]>({ queryKey: ["/api/slots"] });
+  const filteredSlots = (allSlots || []).filter((s) => {
+    if (blockForm.mediaType && s.mediaType !== blockForm.mediaType) return false;
+    if (blockForm.mediaType === "website" && blockForm.pageType && s.pageType !== blockForm.pageType) return false;
+    return true;
+  });
 
   const { data: bookings, isLoading: bookingsLoading } = useQuery<Booking[]>({
     queryKey: ["/api/bookings"],
   });
 
-  const { data: slots = [], isLoading: slotsLoading } = useQuery<Slot[]>({
-    queryKey: ["/api/slots"],
+
+
+  // Work Orders (requests raised by clients)
+  const { data: workOrdersData = [], isLoading: woLoading } = useQuery<{ workOrder: any; items: any[] }[]>({
+    queryKey: ["/api/work-orders"],
   });
+
+  const pendingWorkOrders = (workOrdersData || []).filter(w => w.workOrder.status === "draft");
+
+  // Email/WhatsApp pricing section removed per requirements
+
+  // Slot pricing editor removed per requirements
 
   const pendingBookings = bookings?.filter(b => b.status === "pending_manager") || [];
   const approvedBookings = bookings?.filter(b => 
@@ -54,7 +99,11 @@ export default function ManagerDashboard() {
 
   const createSlotMutation = useMutation({
     mutationFn: async (data: z.infer<typeof slotFormSchema>) => {
-      return await apiRequest("POST", "/api/slots", data);
+      return await apiRequest("POST", "/api/slots", {
+        ...data,
+        pricing: String(data.pricing),
+        createdById: user?.id,
+      });
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/slots"] });
@@ -160,8 +209,7 @@ export default function ManagerDashboard() {
                           </FormControl>
                           <SelectContent>
                             <SelectItem value="available">Available</SelectItem>
-                            <SelectItem value="booked">Booked</SelectItem>
-                            <SelectItem value="inactive">Inactive</SelectItem>
+                            <SelectItem value="pending">Pending</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -257,11 +305,11 @@ export default function ManagerDashboard() {
       <div className="grid gap-6 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Approvals</CardTitle>
+            <CardTitle className="text-sm font-medium">Pending Work Orders</CardTitle>
             <ClipboardCheck className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-orange-600" data-testid="text-pending-count">{pendingBookings.length}</div>
+            <div className="text-2xl font-bold text-orange-600" data-testid="text-pending-count">{pendingWorkOrders.length}</div>
             <p className="text-xs text-muted-foreground">Require your review</p>
           </CardContent>
         </Card>
@@ -302,53 +350,43 @@ export default function ManagerDashboard() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Pending Approvals</CardTitle>
-          <CardDescription>Review and approve client advertising requests</CardDescription>
+          <CardTitle>Pending Work Orders</CardTitle>
+          <CardDescription>Requests raised by clients awaiting your quotation</CardDescription>
         </CardHeader>
         <CardContent>
-          {bookingsLoading ? (
+          {woLoading ? (
             <div className="space-y-3">
               {[...Array(3)].map((_, i) => (
                 <Skeleton key={i} className="h-24 w-full" />
               ))}
             </div>
-          ) : pendingBookings.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No pending approvals</p>
+          ) : pendingWorkOrders.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8">No pending work orders</p>
           ) : (
-            <div className="space-y-4">
-              {pendingBookings.map((booking) => (
-                <Card key={booking.id} className="hover-elevate" data-testid={`card-booking-${booking.id}`}>
-                  <CardContent className="flex items-center justify-between gap-4 pt-6">
+            <div className="space-y-3">
+          {pendingWorkOrders.map(({ workOrder, items }) => (
+            <Card
+              key={workOrder.id}
+              className="hover-elevate cursor-pointer"
+              onClick={() => navigate(`/work-orders/${workOrder.id}`)}
+            >
+              <CardContent className="flex items-center justify-between gap-4 pt-6">
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium">Booking #{booking.id}</span>
-                        <Badge variant="secondary">Pending Review</Badge>
+                        <span className="font-medium">WO #{workOrder.id}</span>
+                        <Badge variant="secondary">Draft</Badge>
                       </div>
                       <div className="text-sm text-muted-foreground mt-1">
-                        Slot ID: {booking.slotId} • {booking.startDate} - {booking.endDate}
+                        Items: {items.length}
                       </div>
-                      <div className="font-medium mt-2">Amount: ₹{booking.totalAmount}</div>
                     </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => updateBookingStatusMutation.mutate({ bookingId: booking.id, status: "rejected" })}
-                        disabled={updateBookingStatusMutation.isPending}
-                        data-testid={`button-reject-${booking.id}`}
-                      >
-                        <XCircle className="mr-1 h-3 w-3" />
-                        Reject
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => updateBookingStatusMutation.mutate({ bookingId: booking.id, status: "pending_vp" })}
-                        disabled={updateBookingStatusMutation.isPending}
-                        data-testid={`button-approve-${booking.id}`}
-                      >
-                        <CheckCircle className="mr-1 h-3 w-3" />
-                        Approve & Send to VP
-                      </Button>
+                    <div className="text-right">
+                      <div className="text-sm text-muted-foreground">Total</div>
+                      {Number(workOrder.totalAmount) > 0 || workOrder.status === 'quoted' ? (
+                        <div className="font-semibold">₹{Number(workOrder.totalAmount).toLocaleString()}</div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">Yet to be quoted</div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -358,53 +396,158 @@ export default function ManagerDashboard() {
         </CardContent>
       </Card>
 
+      {/* Pricing controls removed as requested */}
+
       <Card>
         <CardHeader>
-          <CardTitle>All Bookings</CardTitle>
-          <CardDescription>Complete list of advertising campaigns</CardDescription>
+          <CardTitle>Manual Slot Blocking</CardTitle>
+          <CardDescription>Reserve or block slots for internal needs</CardDescription>
         </CardHeader>
-        <CardContent>
-          {bookingsLoading ? (
-            <div className="space-y-3">
-              {[...Array(5)].map((_, i) => (
-                <Skeleton key={i} className="h-16 w-full" />
-              ))}
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Media Type</div>
+              <Select value={blockForm.mediaType} onValueChange={(v) => {
+                setBlockForm({ ...blockForm, mediaType: v as any, pageType: v === "website" ? (blockForm.pageType || "main") : undefined, slotId: undefined });
+              }}>
+                <SelectTrigger className="h-8">
+                  <SelectValue placeholder="Select media" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="website">Website</SelectItem>
+                  <SelectItem value="mobile">Mobile App</SelectItem>
+                  <SelectItem value="magazine">Magazine</SelectItem>
+                  <SelectItem value="email">Email</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          ) : !bookings || bookings.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No bookings yet</p>
-          ) : (
-            <div className="space-y-2">
-              {bookings.map((booking) => (
-                <div
-                  key={booking.id}
-                  className="flex items-center justify-between p-4 rounded-lg border hover-elevate"
-                  data-testid={`row-booking-${booking.id}`}
-                >
-                  <div className="flex-1">
-                    <span className="font-medium">Booking #{booking.id}</span>
-                    <span className="text-sm text-muted-foreground ml-4">
-                      {booking.startDate} - {booking.endDate}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <Badge variant={
-                      booking.status === "active" ? "default" :
-                      booking.status === "rejected" ? "destructive" :
-                      "secondary"
-                    }>
-                      {booking.status.replace(/_/g, " ")}
-                    </Badge>
-                    <span className="font-medium">₹{booking.totalAmount}</span>
-                    <Button variant="ghost" size="sm" data-testid={`button-details-${booking.id}`}>
-                      Details
-                    </Button>
-                  </div>
-                </div>
-              ))}
+            {blockForm.mediaType === "website" && (
+              <div>
+                <div className="text-xs text-muted-foreground mb-1">Page</div>
+                <Select value={blockForm.pageType} onValueChange={(v) => setBlockForm({ ...blockForm, pageType: v, slotId: undefined })}>
+                  <SelectTrigger className="h-8">
+                    <SelectValue placeholder="Select page" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="main">Landing page</SelectItem>
+                    <SelectItem value="student_home">Student home page</SelectItem>
+                    <SelectItem value="student_login">Login page</SelectItem>
+                    <SelectItem value="aimcat_results_analysis">AIMCAT results and analysis page</SelectItem>
+                    <SelectItem value="chat_pages">Chat pages</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div className="md:col-span-2">
+              <div className="text-xs text-muted-foreground mb-1">Slot</div>
+              <Select
+                value={blockForm.slotId ? String(blockForm.slotId) : undefined}
+                onValueChange={(v) => setBlockForm({ ...blockForm, slotId: Number(v) })}
+              >
+                <SelectTrigger className="h-8">
+                  <SelectValue placeholder="Select slot" />
+                </SelectTrigger>
+                <SelectContent>
+                  {filteredSlots.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      {`${s.mediaType === "website" ? "Website" : humanize(s.mediaType)}${
+                        s.mediaType === "website" ? ` • ${humanize(s.pageType)}` : ""
+                      } • ${humanize(s.position)}`} • {s.dimensions}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          )}
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">Start</div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Input
+                    readOnly
+                    value={blockStartDate ? new Date(blockStartDate).toLocaleDateString() : ""}
+                    placeholder="Select date"
+                    className="h-8 cursor-pointer"
+                  />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="p-0">
+                  <Calendar
+                    mode="single"
+                    selected={blockStartDate as any}
+                    onSelect={(d: any) => {
+                      setBlockStartDate(d || null);
+                      const s = d ? new Date(d).toISOString().split("T")[0] : "";
+                      setBlockForm({ ...blockForm, start: s });
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground mb-1">End</div>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Input
+                    readOnly
+                    value={blockEndDate ? new Date(blockEndDate).toLocaleDateString() : ""}
+                    placeholder="Select date"
+                    className="h-8 cursor-pointer"
+                  />
+                </PopoverTrigger>
+                <PopoverContent align="start" className="p-0">
+                  <Calendar
+                    mode="single"
+                    selected={blockEndDate as any}
+                    onSelect={(d: any) => {
+                      setBlockEndDate(d || null);
+                      const e = d ? new Date(d).toISOString().split("T")[0] : "";
+                      setBlockForm({ ...blockForm, end: e });
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div className="md:col-span-6">
+              <Input placeholder="Reason" value={blockForm.reason || ""} onChange={(e) => setBlockForm({ ...blockForm, reason: e.target.value })} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={async () => {
+              if (!blockForm.slotId) { toast({ title: "Slot ID required", variant: "destructive" }); return; }
+              try {
+                await fetch(`/api/slots/${blockForm.slotId}/unblock`, { method: "POST" }).then(r => r.ok ? r.json() : Promise.reject(r));
+                toast({ title: "Unblocked", description: `Slot #${blockForm.slotId} is now available` });
+              } catch {
+                toast({ title: "Failed", description: "Could not unblock slot", variant: "destructive" });
+              }
+            }}>Unblock</Button>
+            <Button onClick={async () => {
+              if (!blockForm.slotId) { toast({ title: "Slot ID required", variant: "destructive" }); return; }
+              try {
+                await fetch(`/api/slots/${blockForm.slotId}/block`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ reason: blockForm.reason, startDate: blockForm.start, endDate: blockForm.end }),
+                }).then(async (r) => {
+                  if (!r.ok) {
+                    let msg = "Failed to block";
+                    try { const j = await r.json(); msg = j?.error || msg; } catch {}
+                    throw new Error(msg);
+                  }
+                  return r.json();
+                });
+                toast({ title: "Blocked", description: `Slot #${blockForm.slotId} blocked` });
+              } catch {
+                toast({ title: "Failed", description: "Cannot block this slot because it overlaps with a client work order.", variant: "destructive" });
+              }
+            }}>Block Slot</Button>
+          </div>
         </CardContent>
       </Card>
+
+     
     </div>
   );
 }
