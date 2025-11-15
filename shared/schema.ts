@@ -104,6 +104,7 @@ export type OtpCode = typeof otpCodes.$inferSelect;
 // Slots table
 export const slots = pgTable("slots", {
   id: serial("id").primaryKey(),
+  slotId: text("slot_id"), // Custom slot ID like web0001, mob0001, mag0001, emi0001, wap0001
   pageType: pageTypeEnum("page_type").notNull(),
   mediaType: mediaTypeEnum("media_type").notNull(),
   position: text("position").notNull(), // e.g., "header", "sidebar", "footer"
@@ -131,13 +132,13 @@ export type Slot = typeof slots.$inferSelect;
 export const bookings = pgTable("bookings", {
   id: serial("id").primaryKey(),
   clientId: integer("client_id").notNull().references(() => users.id),
-  slotId: integer("slot_id").notNull().references(() => slots.id),
+  customSlotId: text("custom_slot_id"), // Custom slot ID like web0001, mob0001, etc. (will be made NOT NULL after data migration)
+  customWorkOrderId: text("custom_work_order_id"), // Custom work order ID like WOWEB20260001, WOEMI20260001, etc.
   startDate: date("start_date").notNull(),
   endDate: date("end_date").notNull(),
   status: bookingStatusEnum("status").default("pending_manager").notNull(),
   totalAmount: decimal("total_amount", { precision: 10, scale: 2 }).notNull(),
   paymentType: paymentTypeEnum("payment_type"),
-  workOrderId: integer("work_order_id"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -225,7 +226,7 @@ export type Proposal = typeof proposals.$inferSelect;
 export const invoices = pgTable("invoices", {
   id: serial("id").primaryKey(),
   bookingId: integer("booking_id").references(() => bookings.id),
-  workOrderId: integer("work_order_id").references(() => workOrders.id),
+  customWorkOrderId: text("custom_work_order_id"), // Custom work order ID like WOWEB20260001, WOEMI20260001, etc.
   amount: decimal("amount", { precision: 10, scale: 2 }).default("0").notNull(),
   status: paymentStatusEnum("status").default("pending").notNull(),
   fileUrl: text("file_url"),
@@ -284,6 +285,7 @@ export type VersionHistory = typeof versionHistory.$inferSelect;
 // Work Orders
 export const workOrders = pgTable("work_orders", {
   id: serial("id").primaryKey(),
+  customWorkOrderId: text("custom_work_order_id"), // Custom WO ID like WOWEB25260001, WOEMI25260001, etc.
   clientId: integer("client_id").notNull().references(() => users.id),
   businessSchoolName: text("business_school_name"), // snapshot for RO
   contactName: text("contact_name"),
@@ -312,8 +314,8 @@ export type WorkOrder = typeof workOrders.$inferSelect;
 
 export const workOrderItems = pgTable("work_order_items", {
   id: serial("id").primaryKey(),
-  workOrderId: integer("work_order_id").notNull().references(() => workOrders.id),
-  slotId: integer("slot_id").references(() => slots.id),
+  customWorkOrderId: text("custom_work_order_id").notNull(), // Custom work order ID like WOWEB20260001, WOEMI20260001, etc.
+  customSlotId: text("custom_slot_id"), // Custom slot ID like web0001, mob0001, etc. (null for addons)
   addonType: addonTypeEnum("addon_type"),
   startDate: date("start_date").notNull(),
   endDate: date("end_date").notNull(),
@@ -329,8 +331,9 @@ export type WorkOrderItem = typeof workOrderItems.$inferSelect;
 // Release Orders
 export const releaseOrders = pgTable("release_orders", {
   id: serial("id").primaryKey(),
-  workOrderId: integer("work_order_id").notNull().references(() => workOrders.id),
-  roNumber: text("ro_number"),
+  customWorkOrderId: text("custom_work_order_id").notNull(), // Custom work order ID like WOWEB20260001, WOEMI20260001, etc.
+  customRoNumber: text("custom_ro_number"), // Custom RO ID like ROWEB20260001, ROEMI20260001, etc.
+  roNumber: text("ro_number"), // Legacy field, will be replaced by customRoNumber
   status: releaseOrderStatusEnum("status").default("issued").notNull(),
   issuedAt: timestamp("issued_at").defaultNow().notNull(),
   pdfUrl: text("pdf_url"),
@@ -348,7 +351,7 @@ export type ReleaseOrder = typeof releaseOrders.$inferSelect;
 
 export const releaseOrderItems = pgTable("release_order_items", {
   id: serial("id").primaryKey(),
-  releaseOrderId: integer("release_order_id").notNull().references(() => releaseOrders.id),
+  customRoNumber: text("custom_ro_number").notNull(), // Custom RO ID like ROWEB20260001, ROEMI20260001, etc.
   workOrderItemId: integer("work_order_item_id").notNull().references(() => workOrderItems.id),
   bannerId: integer("banner_id").references(() => banners.id),
 });
@@ -376,10 +379,10 @@ export type ActivityLog = typeof activityLogs.$inferSelect;
 // Deployments table
 export const deployments = pgTable("deployments", {
   id: serial("id").primaryKey(),
-  releaseOrderId: integer("release_order_id").notNull().references(() => releaseOrders.id),
+  customRoNumber: text("custom_ro_number").notNull(), // Custom RO ID like ROWEB20260001, ROEMI20260001, etc.
   workOrderItemId: integer("work_order_item_id").notNull().references(() => workOrderItems.id),
   bannerUrl: text("banner_url").notNull(),
-  slotId: integer("slot_id").references(() => slots.id),
+  customSlotId: text("custom_slot_id"), // Custom slot ID like web0001, mob0001, etc.
   deployedById: integer("deployed_by_id").notNull().references(() => users.id),
   deployedAt: timestamp("deployed_at").defaultNow().notNull(),
   status: deploymentStatusEnum("status").default("deployed").notNull(),

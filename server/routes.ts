@@ -8,7 +8,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { banners, versionHistory, workOrders, workOrderItems, releaseOrders, releaseOrderItems, invoices, activityLogs, deployments, bookings, payments, analytics, proposals } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
-import { insertUserSchema, insertOtpCodeSchema, insertSlotSchema, insertBookingSchema, insertBannerSchema, insertApprovalSchema, signupSchema, users } from "@shared/schema";
+import { insertUserSchema, insertOtpCodeSchema, insertSlotSchema, insertBookingSchema, insertBannerSchema, insertApprovalSchema, signupSchema, users, type Slot } from "@shared/schema";
 import { notificationService } from "./services/notification";
 import { analyticsService } from "./services/analytics";
 import { emailService } from "./services/email";
@@ -146,6 +146,32 @@ function numberToIndianWords(amount: number): string {
 
   const finalWords = words.join(" ").trim();
   return finalWords.toUpperCase();
+}
+
+// Helper function to get work order by custom ID or integer ID
+async function getWorkOrderByIdParam(idParam: string) {
+  if (idParam.startsWith('WO')) {
+    // It's a custom work order ID (e.g., WOWEB20250005)
+    return await storage.getWorkOrderByCustomId(idParam);
+  } else {
+    // It's an integer ID (legacy support)
+    const id = parseInt(idParam);
+    if (isNaN(id)) throw new Error("Invalid work order ID");
+    return await storage.getWorkOrder(id);
+  }
+}
+
+// Helper function to get release order by custom ID or integer ID
+async function getReleaseOrderByIdParam(idParam: string) {
+  if (idParam.startsWith('RO')) {
+    // It's a custom release order ID (e.g., ROWEB20250001)
+    return await storage.getReleaseOrderByCustomId(idParam);
+  } else {
+    // It's an integer ID (legacy support)
+    const id = parseInt(idParam);
+    if (isNaN(id)) throw new Error("Invalid release order ID");
+    return await storage.getReleaseOrder(id);
+  }
 }
 
 export function registerRoutes(app: Express) {
@@ -313,10 +339,11 @@ export function registerRoutes(app: Express) {
         "active",
         "paused",
       ]);
-      const bookedSlotIds = new Set(
-        overlappingBookings.filter(b => blockingStatuses.has(b.status as any)).map(b => b.slotId)
+      // Use customSlotId to track booked slots - need to convert to numeric IDs for comparison
+      const bookedCustomSlotIds = new Set(
+        overlappingBookings.filter(b => blockingStatuses.has(b.status as any) && b.customSlotId).map(b => b.customSlotId)
       );
-      const availableSlots = slots.filter(s => !bookedSlotIds.has(s.id));
+      const availableSlots = slots.filter(s => !bookedCustomSlotIds.has(s.slotId || ""));
 
       res.json(availableSlots);
     } catch (error: any) {
@@ -343,6 +370,7 @@ export function registerRoutes(app: Express) {
       const allWorkOrders = await db.select().from(workOrders);
       const allWorkOrderItems = await db.select().from(workOrderItems);
       const woById = new Map<number, any>(allWorkOrders.map((w: any) => [w.id, w]));
+      const woByCustomId = new Map<string, any>(allWorkOrders.filter((w: any) => w.customWorkOrderId).map((w: any) => [w.customWorkOrderId, w]));
 
       const blocksForSlot = (slotId: number) => {
         // Blocks due to manager manual block (slot fields)
@@ -363,11 +391,15 @@ export function registerRoutes(app: Express) {
         if (managerBlocked) return { blocked: true, blockType: "manager_block", state: "booked" };
 
         // Blocks due to work order items (for any non-rejected WO)
-        const items = allWorkOrderItems.filter((it: any) => it.slotId === slotId);
+        // Match by customSlotId - get slot's custom ID and compare
+        const slotCustomId = slot?.slotId;
+        const items = slotCustomId ? allWorkOrderItems.filter((it: any) => it.customSlotId === slotCustomId) : [];
         let hasBooked = false;
         let bookedWoId: number | null = null;
         for (const it of items) {
-          const wo = woById.get(it.workOrderId);
+          const wo = (it as any).customWorkOrderId 
+            ? woByCustomId.get((it as any).customWorkOrderId)
+            : null;
           if (!wo) continue;
           // Consider WOs that are not rejected
           if (wo.status === "rejected") continue;
@@ -537,12 +569,18 @@ export function registerRoutes(app: Express) {
         if (isNaN(s.getTime()) || isNaN(e.getTime())) {
           return res.status(400).json({ error: "Invalid start or end date" });
         }
-        const items = await db.select().from(workOrderItems).where(eq(workOrderItems.slotId, slotId));
-        const woIds = Array.from(new Set(items.map((it: any) => it.workOrderId))).filter(Boolean) as number[];
+        // Get slot's custom ID first, then find items by customSlotId
+        const slot = await storage.getSlot(slotId);
+        if (!slot || !slot.slotId) {
+          return res.status(404).json({ error: "Slot not found or has no custom ID" });
+        }
+        const items = await db.select().from(workOrderItems).where(eq(workOrderItems.customSlotId, slot.slotId));
+        // Get unique custom work order IDs from items
+        const customWoIds = Array.from(new Set(items.map((it: any) => it.customWorkOrderId).filter(Boolean))) as string[];
         const allWos = await db.select().from(workOrders);
-        const woMap = new Map<number, any>(allWos.map((w: any) => [w.id, w]));
+        const woMap = new Map<string, any>(allWos.filter((w: any) => w.customWorkOrderId).map((w: any) => [w.customWorkOrderId, w]));
         for (const it of items) {
-          const wo = woMap.get(it.workOrderId);
+          const wo = (it as any).customWorkOrderId ? woMap.get((it as any).customWorkOrderId) : null;
           if (!wo || wo.status === "rejected") continue;
           const iStart = new Date(it.startDate as any);
           const iEnd = new Date(it.endDate as any);
@@ -614,14 +652,36 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/bookings", async (req, res) => {
     try {
-      const validatedData = insertBookingSchema.parse(req.body);
-
-      // Enforce: only one slot per section for a client (section = website:pageType, or mediaType for others)
-      const slot = await storage.getSlot(validatedData.slotId);
+      const body = req.body as any;
+      
+      // Support both slotId (integer) and customSlotId (string) for backward compatibility
+      let customSlotId: string;
+      let slot: Slot | undefined;
+      
+      if (body.customSlotId) {
+        customSlotId = body.customSlotId;
+        slot = await storage.getSlotByCustomId(customSlotId);
+      } else if (body.slotId) {
+        // Convert integer slotId to customSlotId
+        slot = await storage.getSlot(body.slotId);
+        if (!slot || !slot.slotId) {
+          return res.status(404).json({ error: "Slot not found or slot has no custom ID" });
+        }
+        customSlotId = slot.slotId;
+      } else {
+        return res.status(400).json({ error: "slotId or customSlotId is required" });
+      }
+      
       if (!slot) {
         return res.status(404).json({ error: "Slot not found" });
       }
 
+      const validatedData = {
+        ...insertBookingSchema.parse({ ...body, customSlotId }),
+        customSlotId,
+      };
+
+      // Enforce: only one slot per section for a client (section = website:pageType, or mediaType for others)
       const incomingKey = slot.mediaType === "website" ? `website:${slot.pageType}` : slot.mediaType;
       const clientBookings = await storage.getBookingsByClient(validatedData.clientId);
       const blockingStatuses = new Set([
@@ -643,7 +703,8 @@ export function registerRoutes(app: Express) {
         const bStart = new Date(b.startDate as any);
         const bEnd = new Date(b.endDate as any);
         if (!(bStart <= rangeEnd && bEnd >= rangeStart)) continue;
-        const bSlot = await storage.getSlot(b.slotId);
+        // Use customSlotId to look up slot
+        const bSlot = b.customSlotId ? await storage.getSlotByCustomId(b.customSlotId) : null;
         if (!bSlot) continue;
         const bKey = bSlot.mediaType === "website" ? `website:${bSlot.pageType}` : bSlot.mediaType;
         if (bKey === incomingKey) {
@@ -1173,7 +1234,11 @@ export function registerRoutes(app: Express) {
   app.get("/api/payments/work-order/:workOrderId", async (req, res) => {
     try {
       const workOrderId = parseInt(req.params.workOrderId);
-      const allBookings = await db.select().from(bookings).where(eq(bookings.workOrderId, workOrderId));
+      const wo = await storage.getWorkOrder(workOrderId);
+      if (!wo || !wo.customWorkOrderId) {
+        return res.json([]);
+      }
+      const allBookings = await db.select().from(bookings).where(eq(bookings.customWorkOrderId, wo.customWorkOrderId));
       const allPayments = [];
       
       for (const booking of allBookings) {
@@ -1191,7 +1256,11 @@ export function registerRoutes(app: Express) {
   app.get("/api/installments/work-order/:workOrderId", async (req, res) => {
     try {
       const workOrderId = parseInt(req.params.workOrderId);
-      const allBookings = await db.select().from(bookings).where(eq(bookings.workOrderId, workOrderId));
+      const wo = await storage.getWorkOrder(workOrderId);
+      if (!wo || !wo.customWorkOrderId) {
+        return res.json([]);
+      }
+      const allBookings = await db.select().from(bookings).where(eq(bookings.customWorkOrderId, wo.customWorkOrderId));
       const allInstallments = [];
       
       for (const booking of allBookings) {
@@ -1208,12 +1277,14 @@ export function registerRoutes(app: Express) {
   // Get comprehensive payment data for a work order (bookings, installments, payments)
   app.get("/api/work-orders/:id/payment-data", async (req, res) => {
     try {
-      const workOrderId = parseInt(req.params.id);
-      const wo = await storage.getWorkOrder(workOrderId);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
       if (!wo) return res.status(404).json({ error: "Work Order not found" });
       
       // Get all bookings for this work order
-      const allBookings = await db.select().from(bookings).where(eq(bookings.workOrderId, workOrderId));
+      const allBookings = wo?.customWorkOrderId 
+        ? await db.select().from(bookings).where(eq(bookings.customWorkOrderId, wo.customWorkOrderId))
+        : [];
       
       // Get installments and payments for each booking
       const bookingsWithData = await Promise.all(
@@ -1271,12 +1342,13 @@ export function registerRoutes(app: Express) {
       const sectionKeys: string[] = [];
       const enriched = await Promise.all(
         items.map(async (it) => {
+          // Convert slotId (integer) to customSlotId
           const slot = await storage.getSlot(it.slotId);
-          if (!slot) throw new Error(`Slot ${it.slotId} not found`);
+          if (!slot || !slot.slotId) throw new Error(`Slot ${it.slotId} not found or has no custom ID`);
           const key = slot.mediaType === "website" ? `website:${slot.pageType}` : slot.mediaType;
           sectionKeys.push(key);
           const unit = 0;
-          return { ...it, unitPrice: unit, subtotal: unit };
+          return { ...it, slotId: it.slotId, customSlotId: slot.slotId, unitPrice: unit, subtotal: unit };
         })
       );
 
@@ -1342,10 +1414,22 @@ export function registerRoutes(app: Express) {
       // Get payment mode from request body (default to "full")
       const { paymentMode = "full" } = req.body as { paymentMode?: "full" | "installment" };
       
+      // Prepare items for work order creation
+      const workOrderItems = [
+        ...enriched.map((it) => ({
+          customSlotId: it.customSlotId,
+          addonType: null as any,
+        })),
+        ...addonItems.map((a) => ({
+          customSlotId: null as any,
+          addonType: a.addonType,
+        })),
+      ];
+
       const wo = await storage.createWorkOrder({
         clientId,
-        businessSchoolName: finalBusinessSchoolName,
-        contactName: finalContactName,
+        businessSchoolName: finalBusinessSchoolName || undefined,
+        contactName: finalContactName || undefined,
         status: "draft",
         paymentMode: paymentMode as any,
         totalAmount: String(totalAmount),
@@ -1353,21 +1437,21 @@ export function registerRoutes(app: Express) {
         createdByName: creatorName as any,
         createdOnDate: createdOnDate as any,
         createdOnTime: createdOnTime as any,
-      });
+      }, workOrderItems);
 
       await storage.addWorkOrderItems(
         [
           ...enriched.map((it) => ({
-          workOrderId: wo.id,
-          slotId: it.slotId,
+          customWorkOrderId: wo.customWorkOrderId!,
+          customSlotId: it.customSlotId,
           startDate: it.startDate,
           endDate: it.endDate,
           unitPrice: String(it.unitPrice),
           subtotal: String(it.subtotal),
           })),
           ...addonItems.map((a) => ({
-            workOrderId: wo.id,
-            slotId: null as any,
+            customWorkOrderId: wo.customWorkOrderId!,
+            customSlotId: null as any,
             addonType: a.addonType,
             startDate: a.startDate,
             endDate: a.endDate,
@@ -1404,16 +1488,17 @@ export function registerRoutes(app: Express) {
               
               for (const b of clientBookings) {
                 if (!blockingStatuses.has(b.status as any)) continue;
-                if (b.workOrderId === wo.id) continue; // Skip bookings from same work order
+                if (b.customWorkOrderId === wo.customWorkOrderId) continue; // Skip bookings from same work order
                 const bStart = new Date(b.startDate as any);
                 const bEnd = new Date(b.endDate as any);
                 if (!(bStart <= rangeEnd && bEnd >= rangeStart)) continue;
-                const bSlot = await storage.getSlot(b.slotId);
+                // Use customSlotId to look up slot
+                const bSlot = b.customSlotId ? await storage.getSlotByCustomId(b.customSlotId) : null;
                 if (!bSlot) continue;
                 const bKey = bSlot.mediaType === "website" ? `website:${bSlot.pageType}` : bSlot.mediaType;
                 if (bKey === incomingKey) {
                   hasConflict = true;
-                  console.warn(`[POST /api/work-orders] Skipping booking for slot ${item.slotId} - conflict with existing booking ${b.id}`);
+                  console.warn(`[POST /api/work-orders] Skipping booking for slot ${item.customSlotId} - conflict with existing booking ${b.id}`);
                   break;
                 }
               }
@@ -1425,14 +1510,14 @@ export function registerRoutes(app: Express) {
               // Use slot pricing if unitPrice is 0 (work order pricing not set yet)
               const bookingAmount = item.unitPrice > 0 ? String(item.unitPrice) : String(slot.pricing);
               
-              console.log(`[POST /api/work-orders] Creating booking for slot ${item.slotId}, work order ${wo.id}`);
+              console.log(`[POST /api/work-orders] Creating booking for slot ${item.customSlotId}, work order ${wo.id}`);
               const booking = await storage.createBooking({
                 clientId: wo.clientId,
-                slotId: item.slotId,
+                customSlotId: item.customSlotId,
+                customWorkOrderId: wo.customWorkOrderId || undefined,
                 startDate: item.startDate as any,
                 endDate: item.endDate as any,
                 totalAmount: bookingAmount,
-                workOrderId: wo.id,
               });
               
               // Create approval workflow entry
@@ -1502,7 +1587,7 @@ export function registerRoutes(app: Express) {
               console.log(`[POST /api/work-orders] Booking ${booking.id} created successfully`);
             }
           } catch (bookingError: any) {
-            console.error(`[POST /api/work-orders] Error creating booking for slot ${item.slotId}:`, bookingError);
+            console.error(`[POST /api/work-orders] Error creating booking for slot ${item.customSlotId || 'unknown'}:`, bookingError);
             // Continue with other items even if one fails
           }
         }
@@ -1519,7 +1604,7 @@ export function registerRoutes(app: Express) {
           await notificationService.createNotification({
             userId: client.id,
             type: "work_order_created",
-            message: `Your request (Work Order #${wo.id}) has been submitted and awaits manager quote.`,
+            message: `Your request (Work Order ${wo.customWorkOrderId || `#${wo.id}`}) has been submitted and awaits manager quote.`,
           });
 
           // Notify managers: new request
@@ -1528,7 +1613,7 @@ export function registerRoutes(app: Express) {
             await notificationService.createNotification({
               userId: m.id,
               type: "approval_required",
-              message: `New Work Order #${wo.id} from ${client.name} requires a quote.`,
+              message: `New Work Order ${wo.customWorkOrderId || `#${wo.id}`} from ${client.name} requires a quote.`,
             });
           }
         }
@@ -1548,6 +1633,7 @@ export function registerRoutes(app: Express) {
         .select({
           // Work order fields
           id: workOrders.id,
+          customWorkOrderId: workOrders.customWorkOrderId,
           clientId: workOrders.clientId,
           businessSchoolName: workOrders.businessSchoolName,
           contactName: workOrders.contactName,
@@ -1585,8 +1671,8 @@ export function registerRoutes(app: Express) {
           const rawItems = await storage.getWorkOrderItems(wo.id);
           const items = await Promise.all(
             rawItems.map(async (it: any) => {
-              if (it.slotId) {
-                const s = await storage.getSlot(it.slotId);
+              if (it.customSlotId) {
+                const s = await storage.getSlotByCustomId(it.customSlotId);
                 return {
                   ...it,
                   slot: s ? { id: s.id, mediaType: s.mediaType, pageType: s.pageType, position: s.position, dimensions: s.dimensions } : null,
@@ -1595,10 +1681,13 @@ export function registerRoutes(app: Express) {
               return it;
             })
           );
-          const invoiceRows = await db.select().from(invoices).where(eq(invoices.workOrderId, wo.id));
+          const invoiceRows = wo.customWorkOrderId 
+            ? await db.select().from(invoices).where(eq(invoices.customWorkOrderId, wo.customWorkOrderId))
+            : [];
           const proforma = invoiceRows.find((inv: any) => inv.invoiceType === "proforma");
           const workOrderWithProforma = {
             id: wo.id,
+            customWorkOrderId: wo.customWorkOrderId,
             clientId: wo.clientId,
             businessSchoolName: wo.businessSchoolName,
             contactName: wo.contactName,
@@ -1654,31 +1743,48 @@ export function registerRoutes(app: Express) {
   });
 
   app.get("/api/work-orders/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
-    const workOrder = await storage.getWorkOrder(id);
-    if (!workOrder) return res.status(404).json({ error: "Work Order not found" });
-    const rawItems = await storage.getWorkOrderItems(id);
-    const items = await Promise.all(
-      rawItems.map(async (it: any) => {
-        if (it.slotId) {
-          const s = await storage.getSlot(it.slotId);
-          return { ...it, slot: s ? { id: s.id, mediaType: s.mediaType, pageType: s.pageType, position: s.position, dimensions: s.dimensions } : null };
-        }
-        return it;
-      })
-    );
-    // include release order id if exists
-    const ros = await storage.getReleaseOrders();
-    const ro = ros.find((r: any) => r.workOrderId === id);
-    res.json({ workOrder, items, releaseOrderId: ro?.id || null, releaseOrderStatus: ro?.status || null });
+    try {
+      const idParam = req.params.id;
+      // getWorkOrderByIdParam handles both custom IDs (WO...) and integer IDs
+      const workOrder = await getWorkOrderByIdParam(idParam);
+      if (!workOrder) return res.status(404).json({ error: "Work Order not found" });
+      
+      // Get work order items - use custom ID if available, otherwise use integer ID
+      const rawItems = workOrder.customWorkOrderId
+        ? await storage.getWorkOrderItemsByCustomId(workOrder.customWorkOrderId)
+        : await storage.getWorkOrderItems(workOrder.id);
+      
+      const items = await Promise.all(
+        rawItems.map(async (it: any) => {
+          if (it.customSlotId) {
+            const s = await storage.getSlotByCustomId(it.customSlotId);
+            return { ...it, slot: s ? { id: s.id, slotId: s.slotId, mediaType: s.mediaType, pageType: s.pageType, position: s.position, dimensions: s.dimensions } : null };
+          }
+          return it;
+        })
+      );
+      
+      // Include release order id if exists
+      const ros = await storage.getReleaseOrders();
+      const ro = workOrder.customWorkOrderId 
+        ? ros.find((r: any) => r.customWorkOrderId === workOrder.customWorkOrderId)
+        : null;
+      
+      res.json({ workOrder, items, releaseOrderId: ro?.id || null, releaseOrderStatus: ro?.status || null });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
   });
 
   app.patch("/api/work-orders/:id", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const idParam = req.params.id;
+      const workOrderForId = await getWorkOrderByIdParam(idParam);
+      if (!workOrderForId) return res.status(404).json({ error: "Work Order not found" });
+      const id = workOrderForId.id; // Use integer ID for updates
       const payload = req.body as Partial<{ totalAmount: string; paymentMode: string; status: string; quotedById: number; gstPercent: number; reason: string; actorId: number }>;
       // Determine previous state
-      const before = await storage.getWorkOrder(id);
+      const before = workOrderForId;
       const patchData: Record<string, unknown> = { ...payload };
       if (payload.status === "quoted") {
         patchData.negotiationRequested = false;
@@ -1722,7 +1828,7 @@ export function registerRoutes(app: Express) {
             await notificationService.createNotification({
               userId: client.id,
               type: "work_order_rejected",
-              message: `Your Work Order #${updated.id} was rejected${payload.reason ? `: ${payload.reason}` : "."}`,
+              message: `Your Work Order ${updated.customWorkOrderId || `#${updated.id}`} was rejected${payload.reason ? `: ${payload.reason}` : "."}`,
             });
           }
           // Log activity
@@ -1745,7 +1851,10 @@ export function registerRoutes(app: Express) {
   // Update a work order item price (manager can edit addon prices)
   app.patch("/api/work-orders/:id/items/:itemId", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
+      if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      const id = wo.id; // Use integer ID for operations
       const itemId = parseInt(req.params.itemId);
       const { unitPrice } = req.body as { unitPrice: string | number };
       const price = Number(unitPrice);
@@ -1761,9 +1870,10 @@ export function registerRoutes(app: Express) {
   // Client accepts quote -> generate Release Order and Proforma
   app.post("/api/work-orders/:id/accept", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const wo = await storage.getWorkOrder(id);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
       if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      const id = wo.id; // Use integer ID for operations
 
       // Enforce PO upload before acceptance
       if (!('poUrl' in wo) || !(wo as any).poUrl) {
@@ -1835,9 +1945,10 @@ export function registerRoutes(app: Express) {
   // Client uploads Purchase Order (PO) for a Work Order
   app.post("/api/work-orders/:id/upload-po", upload.single("file"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const wo = await storage.getWorkOrder(id);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
       if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      const id = wo.id; // Use integer ID for operations
 
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
       
@@ -1918,10 +2029,11 @@ export function registerRoutes(app: Express) {
   // Manager approves PO -> notify Accounts and create Proforma
   app.post("/api/work-orders/:id/approve-po", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const { actorId } = (req.body ?? {}) as { actorId?: number };
-      const wo = await storage.getWorkOrder(id);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
       if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      const id = wo.id; // Use integer ID for operations
+      const { actorId } = (req.body ?? {}) as { actorId?: number };
       if (!(wo as any).poUrl) return res.status(400).json({ error: "No PO uploaded for this Work Order" });
 
       // Update PO approval status
@@ -1942,22 +2054,61 @@ export function registerRoutes(app: Express) {
       }
 
       // Create Release Order if absent
-      const existingRos = await storage.getReleaseOrders();
-      let ro = existingRos.find((r: any) => r.workOrderId === id);
-      if (!ro) {
-        const roNumber = `RO-${id}-${Date.now()}`;
-        ro = await storage.createReleaseOrder({
-          workOrderId: id,
-          roNumber,
-          status: "pending_banner_upload" as any,
-          createdById: (wo as any).quotedById,
-          paymentStatus: "pending" as any,
-        } as any);
+      if (!wo.customWorkOrderId) {
+        console.error(`[POST /api/work-orders/:id/approve-po] Work order ${id} does not have a custom work order ID`);
+        return res.status(400).json({ error: "Work Order does not have a custom work order ID" });
+      }
 
-        const items = await storage.getWorkOrderItems(id);
-        await storage.addReleaseOrderItems(
-          items.map((it) => ({ releaseOrderId: ro.id, workOrderItemId: it.id }))
-        );
+      // First, check if work order has items (needed for RO number generation)
+      const items = await storage.getWorkOrderItems(id);
+      if (items.length === 0) {
+        console.error(`[POST /api/work-orders/:id/approve-po] Work order ${id} has no items - cannot create release order`);
+        return res.status(400).json({ error: "Cannot approve PO: Work order has no items. Please add items before approving." });
+      }
+
+      console.log(`[POST /api/work-orders/:id/approve-po] Work order ${wo.customWorkOrderId} has ${items.length} items`);
+
+      const existingRos = await storage.getReleaseOrders();
+      let ro = existingRos.find((r: any) => r.customWorkOrderId === wo.customWorkOrderId);
+      if (!ro) {
+        try {
+          console.log(`[POST /api/work-orders/:id/approve-po] Creating release order for work order ${wo.customWorkOrderId}`);
+          ro = await storage.createReleaseOrder({
+            customWorkOrderId: wo.customWorkOrderId,
+            status: "pending_banner_upload" as any,
+            createdById: (wo as any).quotedById,
+            paymentStatus: "pending" as any,
+          } as any);
+
+          if (!ro || !ro.customRoNumber) {
+            console.error(`[POST /api/work-orders/:id/approve-po] Failed to create release order or generate custom RO number. RO:`, ro);
+            return res.status(500).json({ error: "Failed to create release order or generate RO number" });
+          }
+
+          console.log(`[POST /api/work-orders/:id/approve-po] Release order created with RO number: ${ro.customRoNumber}`);
+          
+          try {
+            console.log(`[POST /api/work-orders/:id/approve-po] Adding ${items.length} items to release order ${ro.customRoNumber}`);
+            const customRoNumber = ro.customRoNumber;
+            await storage.addReleaseOrderItems(
+              items.map((it) => ({ customRoNumber: customRoNumber, workOrderItemId: it.id }))
+            );
+            console.log(`[POST /api/work-orders/:id/approve-po] Release order items added successfully`);
+          } catch (itemsError: any) {
+            console.error(`[POST /api/work-orders/:id/approve-po] Error adding release order items:`, itemsError);
+            console.error(`[POST /api/work-orders/:id/approve-po] Error message:`, itemsError.message);
+            console.error(`[POST /api/work-orders/:id/approve-po] Error stack:`, itemsError.stack);
+            // Don't fail the entire operation if items addition fails - release order is already created
+            // But log the error for debugging
+          }
+        } catch (roError: any) {
+          console.error(`[POST /api/work-orders/:id/approve-po] Error creating release order:`, roError);
+          console.error(`[POST /api/work-orders/:id/approve-po] Error message:`, roError.message);
+          console.error(`[POST /api/work-orders/:id/approve-po] Error stack:`, roError.stack);
+          console.error(`[POST /api/work-orders/:id/approve-po] Error code:`, roError.code);
+          console.error(`[POST /api/work-orders/:id/approve-po] Error detail:`, roError.detail);
+          return res.status(500).json({ error: `Failed to create release order: ${roError.message}` });
+        }
       } else if ((ro as any).status === "issued") {
         await db.update(releaseOrders)
           .set({ status: "pending_banner_upload" as any })
@@ -1965,7 +2116,10 @@ export function registerRoutes(app: Express) {
         ro = { ...ro, status: "pending_banner_upload" };
       }
 
-      const existingInvoices = await db.select().from(invoices).where(eq(invoices.workOrderId, id));
+      // Query invoices by customWorkOrderId (workOrderId column was removed)
+      const existingInvoices = wo.customWorkOrderId
+        ? await db.select().from(invoices).where(eq(invoices.customWorkOrderId, wo.customWorkOrderId))
+        : [];
       const proformaInvoice = existingInvoices.find((i: any) => i.invoiceType === "proforma");
 
       try {
@@ -1984,17 +2138,22 @@ export function registerRoutes(app: Express) {
 
       res.json({ success: true, releaseOrder: ro, proforma: proformaInvoice ?? null });
     } catch (e: any) {
-      res.status(400).json({ error: e.message });
+      console.error(`[POST /api/work-orders/:id/approve-po] Unexpected error:`, e);
+      console.error(`[POST /api/work-orders/:id/approve-po] Error message:`, e.message);
+      console.error(`[POST /api/work-orders/:id/approve-po] Error stack:`, e.stack);
+      const errorMessage = e.message || "Failed to approve PO. Please check server logs for details.";
+      res.status(400).json({ error: errorMessage });
     }
   });
 
   // Client uploads banner for a specific work order item
   app.post("/api/work-orders/:id/items/:itemId/upload-banner", upload.single("file"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const itemId = parseInt(req.params.itemId);
-      const wo = await storage.getWorkOrder(id);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
       if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      const id = wo.id; // Use integer ID for operations
+      const itemId = parseInt(req.params.itemId);
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
       // Validate file size (below 500KB)
@@ -2022,12 +2181,14 @@ export function registerRoutes(app: Express) {
       
       // Find the booking associated with this work order item
       const item = await storage.getWorkOrderItems(id).then(items => items.find(i => i.id === itemId));
-      if (item && item.slotId) {
-        // Find booking for this work order and slot
-        const allBookings = await db.select().from(bookings).where(eq(bookings.workOrderId, id));
+      if (item && item.customSlotId) {
+        // Find booking for this work order and slot - use the work order from the initial lookup
+        const allBookings = wo?.customWorkOrderId 
+          ? await db.select().from(bookings).where(eq(bookings.customWorkOrderId, wo.customWorkOrderId))
+          : [];
         const booking = allBookings.find(b => {
-          // Try to match by slotId - we need to check if booking slot matches item slot
-          return b.slotId === item.slotId;
+          // Try to match by customSlotId - we need to check if booking slot matches item slot
+          return b.customSlotId === item.customSlotId;
         });
         
         if (booking) {
@@ -2040,7 +2201,7 @@ export function registerRoutes(app: Express) {
             
             // Get user ID from request (client uploading)
             const { user } = req as any;
-            const uploadedById = user?.id || wo.clientId;
+            const uploadedById = user?.id || (wo ? (wo as any).clientId : null);
             
             console.log(`[POST /api/work-orders/:id/items/:itemId/upload-banner] Creating banner for booking ${booking.id}, version ${nextVersion}`);
             
@@ -2087,8 +2248,42 @@ export function registerRoutes(app: Express) {
             // Don't fail the upload if banner record creation fails
           }
         } else {
-          console.warn(`[POST /api/work-orders/:id/items/:itemId/upload-banner] No booking found for work order ${id} with slot ${item.slotId}`);
+          console.warn(`[POST /api/work-orders/:id/items/:itemId/upload-banner] No booking found for work order ${id} with slot ${item.customSlotId || 'N/A'}`);
         }
+      }
+      
+      // Check if all banners are uploaded and update release order status if needed
+      // This allows the status to automatically update without requiring the client to click "Submit"
+      try {
+        // Use the work order from the initial lookup (not re-fetched)
+        if (wo && wo.customWorkOrderId) {
+          const allItems = await storage.getWorkOrderItems(id);
+          const slotItems = allItems.filter((it: any) => !it.addonType);
+          const allBannersUploaded = slotItems.length > 0 && slotItems.every((it: any) => it.bannerUrl);
+          
+          if (allBannersUploaded) {
+            const existingRos = await storage.getReleaseOrders();
+            const ro = existingRos.find((r: any) => r.customWorkOrderId === wo.customWorkOrderId);
+            
+            if (ro && String(ro.status) === "pending_banner_upload" && !ro.rejectionReason) {
+              // Only auto-update if status is pending_banner_upload and no rejection reason
+              // If there's a rejection reason, wait for manager review
+              console.log(`[POST /api/work-orders/:id/items/:itemId/upload-banner] All banners uploaded for work order ${wo.customWorkOrderId}, updating release order ${ro.id} status to pending_manager_review`);
+              await db.update(releaseOrders)
+                .set({
+                  status: "pending_manager_review" as any,
+                  rejectionReason: null,
+                  rejectedById: null,
+                  rejectedAt: null,
+                })
+                .where(eq(releaseOrders.id, ro.id));
+              console.log(`[POST /api/work-orders/:id/items/:itemId/upload-banner] Release order status updated successfully`);
+            }
+          }
+        }
+      } catch (statusUpdateError: any) {
+        console.error(`[POST /api/work-orders/:id/items/:itemId/upload-banner] Error updating release order status:`, statusUpdateError);
+        // Don't fail the upload if status update fails
       }
       
       res.json({ url: `/uploads/${fileName}` });
@@ -2100,9 +2295,10 @@ export function registerRoutes(app: Express) {
   // Client submits banners (notify managers)
   app.post("/api/work-orders/:id/submit-banners", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const wo = await storage.getWorkOrder(id);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
       if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      const id = wo.id; // Use integer ID for operations
       
       // Validate that all banners are uploaded
       const items = await storage.getWorkOrderItems(id);
@@ -2115,8 +2311,9 @@ export function registerRoutes(app: Express) {
         });
       }
       
+      // Find release order by customWorkOrderId (workOrderId column was removed)
       const releaseOrdersForWo = await storage.getReleaseOrders();
-      const ro = releaseOrdersForWo.find((r: any) => r.workOrderId === id);
+      const ro = releaseOrdersForWo.find((r: any) => r.customWorkOrderId === wo.customWorkOrderId);
       if (ro && ["pending_banner_upload", "pending_manager_review"].includes(String(ro.status))) {
         await db.update(releaseOrders)
           .set({
@@ -2144,15 +2341,32 @@ export function registerRoutes(app: Express) {
   // Manager approves Release Order (notify VP)
   app.post("/api/release-orders/:id/approve", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const { actorId } = (req.body ?? {}) as { actorId?: number; comments?: string };
-      const ro = await storage.getReleaseOrder(id);
+      const idParam = req.params.id;
+      const ro = await getReleaseOrderByIdParam(idParam);
       if (!ro) return res.status(404).json({ error: "Release Order not found" });
-      const wo = await storage.getWorkOrder(ro.workOrderId);
+      const id = ro.id; // Use integer ID for operations
+      const { actorId } = (req.body ?? {}) as { actorId?: number; comments?: string };
+      const wo = await storage.getWorkOrderByCustomId(ro.customWorkOrderId);
       const client = wo ? await storage.getUser(wo.clientId) : undefined;
 
       let nextStatus: "pending_vp_review" | "pending_pv_review" | "accepted" | null = null;
-      if (ro.status === "pending_manager_review") {
+      if (ro.status === "pending_manager_review" || ro.status === "pending_banner_upload") {
+        // Allow approval from pending_banner_upload if manager is reviewing banners before client submits
+        // Check if all banners are uploaded before allowing approval
+        if (ro.status === "pending_banner_upload") {
+          // Release order items are the same as work order items
+          const rawItems = await db.select().from(workOrderItems)
+            .where(eq(workOrderItems.customWorkOrderId, ro.customWorkOrderId));
+          
+          const slotItems = rawItems.filter((item: any) => !item.addonType);
+          const itemsWithoutBanners = slotItems.filter((item: any) => !item.bannerUrl);
+          
+          if (itemsWithoutBanners.length > 0) {
+            return res.status(400).json({ 
+              error: `Cannot approve: ${itemsWithoutBanners.length} slot(s) still missing banners.` 
+            });
+          }
+        }
         nextStatus = "pending_vp_review";
       } else if (ro.status === "pending_vp_review") {
         nextStatus = "pending_pv_review";
@@ -2179,7 +2393,7 @@ export function registerRoutes(app: Express) {
           await notificationService.createNotification({
             userId: vp.id,
             type: "ro_approved",
-            message: `Release Order #${id} for ${client?.name ?? `WO ${ro.workOrderId}`} is ready for your approval.`,
+            message: `Release Order ${ro.customRoNumber || `#${id}`} for ${client?.name ?? (wo?.customWorkOrderId ? `WO ${wo.customWorkOrderId}` : "Unknown")} is ready for your approval.`,
           });
         }
       } else if (nextStatus === "pending_pv_review") {
@@ -2189,14 +2403,16 @@ export function registerRoutes(app: Express) {
           await notificationService.createNotification({
             userId: pv.id,
             type: "ro_approved",
-            message: `Release Order #${id} for ${client?.name ?? `WO ${ro.workOrderId}`} awaits your approval.`,
+            message: `Release Order ${ro.customRoNumber || `#${id}`} for ${client?.name ?? (wo?.customWorkOrderId ? `WO ${wo.customWorkOrderId}` : "Unknown")} awaits your approval.`,
           });
           if (pv.email) {
+            // Email service expects workOrderId as number, but we'll pass the integer ID if available
+            // For now, we'll pass the work order's integer ID or 0 as fallback
             await emailService.sendReleaseOrderApprovalEmail(
               pv.email,
               pv.name || "PV Sir",
               id,
-              ro.workOrderId,
+              wo?.id || 0,
               approvalUrl
             );
           }
@@ -2209,7 +2425,7 @@ export function registerRoutes(app: Express) {
             await notificationService.createNotification({
               userId: recipient.id,
               type: "ro_accepted",
-              message: `Release Order #${id} for ${client?.name ?? `WO ${ro.workOrderId}`} has been accepted.`,
+              message: `Release Order ${ro.customRoNumber || `#${id}`} for ${client?.name ?? (wo?.customWorkOrderId ? `WO ${wo.customWorkOrderId}` : "Unknown")} has been accepted.`,
             });
           }
         }
@@ -2217,7 +2433,7 @@ export function registerRoutes(app: Express) {
 
       try {
         const actorRole =
-          previousStatus === "pending_manager_review"
+          previousStatus === "pending_manager_review" || previousStatus === "pending_banner_upload"
             ? "manager"
             : previousStatus === "pending_vp_review"
             ? "vp"
@@ -2245,13 +2461,14 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/release-orders/:id/reject", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const { actorId, reason } = (req.body ?? {}) as { actorId?: number; reason?: string };
-      const ro = await storage.getReleaseOrder(id);
+      const idParam = req.params.id;
+      const ro = await getReleaseOrderByIdParam(idParam);
       if (!ro) return res.status(404).json({ error: "Release Order not found" });
+      const id = ro.id; // Use integer ID for operations
+      const { actorId, reason } = (req.body ?? {}) as { actorId?: number; reason?: string };
 
       const currentStatus = String(ro.status);
-      console.log(`[REJECT DEBUG] RO #${id} current status: "${currentStatus}"`);
+      console.log(`[REJECT DEBUG] RO ${ro.customRoNumber || `#${id}`} current status: "${currentStatus}"`);
       
       if (currentStatus !== "pending_vp_review" && currentStatus !== "pending_pv_review") {
         console.log(`[REJECT DEBUG] Invalid status: ${currentStatus}`);
@@ -2271,19 +2488,19 @@ export function registerRoutes(app: Express) {
         actorRole = "pv_sir";
         nextStatus = "pending_vp_review";
         notifyRole = "vp";
-        console.log(`[REJECT] PV Sir rejecting RO #${id}: sending to VP (pending_vp_review)`);
+        console.log(`[REJECT] PV Sir rejecting RO ${ro.customRoNumber || `#${id}`}: sending to VP (pending_vp_review)`);
       } else if (currentStatus === "pending_vp_review") {
         // VP is rejecting - send to manager
         actorRole = "vp";
         nextStatus = "pending_manager_review";
         notifyRole = "manager";
-        console.log(`[REJECT] VP rejecting RO #${id}: sending to Manager (pending_manager_review)`);
+        console.log(`[REJECT] VP rejecting RO ${ro.customRoNumber || `#${id}`}: sending to Manager (pending_manager_review)`);
       } else {
         console.log(`[REJECT ERROR] Unexpected status: ${currentStatus}`);
         return res.status(400).json({ error: "Invalid status for rejection." });
       }
 
-      console.log(`[REJECT DEBUG] Updating RO #${id} to status: "${nextStatus}", notifying: ${notifyRole}`);
+      console.log(`[REJECT DEBUG] Updating RO ${ro.customRoNumber || `#${id}`} to status: "${nextStatus}", notifying: ${notifyRole}`);
       
       const updateResult = await db
         .update(releaseOrders)
@@ -2301,7 +2518,7 @@ export function registerRoutes(app: Express) {
       // Verify the update was successful
       const updatedRo = await storage.getReleaseOrder(id);
       if (updatedRo) {
-        console.log(`[REJECT DEBUG] Verified RO #${id} status after update: "${String(updatedRo.status)}"`);
+        console.log(`[REJECT DEBUG] Verified RO ${ro.customRoNumber || `#${id}`} status after update: "${String(updatedRo.status)}"`);
       }
 
       try {
@@ -2325,7 +2542,7 @@ export function registerRoutes(app: Express) {
           await notificationService.createNotification({
             userId: vp.id,
             type: "ro_rejected",
-            message: `Release Order #${id} was rejected by PV Sir for revisions${trimmedReason ? `: ${trimmedReason}` : ""}.`,
+            message: `Release Order ${ro.customRoNumber || `#${id}`} was rejected by PV Sir for revisions${trimmedReason ? `: ${trimmedReason}` : ""}.`,
           });
         }
       } else {
@@ -2335,7 +2552,7 @@ export function registerRoutes(app: Express) {
           await notificationService.createNotification({
             userId: manager.id,
             type: "ro_rejected",
-            message: `Release Order #${id} was rejected for revisions${trimmedReason ? `: ${trimmedReason}` : ""}.`,
+            message: `Release Order ${ro.customRoNumber || `#${id}`} was rejected for revisions${trimmedReason ? `: ${trimmedReason}` : ""}.`,
           });
         }
       }
@@ -2348,12 +2565,14 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/release-orders/:id/return-to-client", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const { actorId, reason } = (req.body ?? {}) as { actorId?: number; reason?: string };
-      const ro = await storage.getReleaseOrder(id);
+      const idParam = req.params.id;
+      const ro = await getReleaseOrderByIdParam(idParam);
       if (!ro) return res.status(404).json({ error: "Release Order not found" });
-      if (ro.status !== "pending_manager_review") {
-        return res.status(400).json({ error: "Release Order must be in manager review before returning to client." });
+      const id = ro.id; // Use integer ID for operations
+      const { actorId, reason } = (req.body ?? {}) as { actorId?: number; reason?: string };
+      // Allow returning to client from both pending_manager_review and pending_banner_upload
+      if (ro.status !== "pending_manager_review" && ro.status !== "pending_banner_upload") {
+        return res.status(400).json({ error: "Release Order must be in manager review or have banners uploaded before returning to client." });
       }
 
       const trimmedReason = (reason ?? "").trim();
@@ -2369,12 +2588,12 @@ export function registerRoutes(app: Express) {
         })
         .where(eq(releaseOrders.id, id));
 
-      const wo = await storage.getWorkOrder(ro.workOrderId);
+      const wo = await storage.getWorkOrderByCustomId(ro.customWorkOrderId);
       if (wo) {
         await notificationService.createNotification({
           userId: wo.clientId,
           type: "ro_rejected",
-          message: `Release Order #${id} requires updates${trimmedReason ? `: ${trimmedReason}` : ""}`,
+          message: `Release Order ${ro.customRoNumber || `#${id}`} requires updates${trimmedReason ? `: ${trimmedReason}` : ""}`,
         });
       }
 
@@ -2387,9 +2606,10 @@ export function registerRoutes(app: Express) {
   // Client requests negotiation on a quoted Work Order
   app.post("/api/work-orders/:id/negotiate", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const wo = await storage.getWorkOrder(id);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
       if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      const id = wo.id; // Use integer ID for operations
 
       const { reason } = req.body as { reason?: string };
       const trimmedReason = (reason || "").trim();
@@ -2431,18 +2651,20 @@ export function registerRoutes(app: Express) {
       }
       const result = await Promise.all(
         ros.map(async (ro: any) => {
-          const rawItems = await db.select().from(workOrderItems)
-            .where(eq(workOrderItems.workOrderId, ro.workOrderId));
+          const rawItems = ro.customWorkOrderId
+            ? await db.select().from(workOrderItems)
+                .where(eq(workOrderItems.customWorkOrderId, ro.customWorkOrderId))
+            : [];
           const items = await Promise.all(
             rawItems.map(async (it: any) => {
-              if (it.slotId) {
-                const s = await storage.getSlot(it.slotId);
-                return { ...it, slot: s ? { id: s.id, mediaType: s.mediaType, pageType: s.pageType, position: s.position, dimensions: s.dimensions } : null };
+              if (it.customSlotId) {
+                const s = await storage.getSlotByCustomId(it.customSlotId);
+                return { ...it, slot: s ? { id: s.id, slotId: s.slotId, mediaType: s.mediaType, pageType: s.pageType, position: s.position, dimensions: s.dimensions } : null };
               }
               return it;
             })
           );
-          const workOrder = await storage.getWorkOrder(ro.workOrderId);
+          const workOrder = ro.customWorkOrderId ? await storage.getWorkOrderByCustomId(ro.customWorkOrderId) : undefined;
           const client = workOrder ? await storage.getUser(workOrder.clientId) : undefined;
           const createdBy = (ro as any).createdById ? await storage.getUser((ro as any).createdById) : undefined;
           return { releaseOrder: ro, items, workOrder, client, createdBy };
@@ -2455,24 +2677,30 @@ export function registerRoutes(app: Express) {
   });
 
   app.get("/api/release-orders/:id", async (req, res) => {
-    const id = parseInt(req.params.id);
-    const ro = await storage.getReleaseOrder(id);
-    if (!ro) return res.status(404).json({ error: "Release Order not found" });
-    const rawItems = await db.select().from(workOrderItems)
-      .where(eq(workOrderItems.workOrderId, ro.workOrderId));
-    const items = await Promise.all(
-      rawItems.map(async (it: any) => {
-        if (it.slotId) {
-          const s = await storage.getSlot(it.slotId);
-          return { ...it, slot: s ? { id: s.id, mediaType: s.mediaType, pageType: s.pageType, position: s.position, dimensions: s.dimensions } : null };
-        }
-        return it;
-      })
-    );
-    const workOrder = await storage.getWorkOrder(ro.workOrderId);
-    const client = workOrder ? await storage.getUser(workOrder.clientId) : undefined;
-    const createdBy = (ro as any).createdById ? await storage.getUser((ro as any).createdById) : undefined;
-    res.json({ releaseOrder: ro, items, workOrder, client, createdBy });
+    try {
+      const idParam = req.params.id;
+      const ro = await getReleaseOrderByIdParam(idParam);
+      if (!ro) return res.status(404).json({ error: "Release Order not found" });
+      const id = ro.id; // Use integer ID for operations
+      
+      const rawItems = await db.select().from(workOrderItems)
+        .where(eq(workOrderItems.customWorkOrderId, ro.customWorkOrderId));
+      const items = await Promise.all(
+        rawItems.map(async (it: any) => {
+          if (it.customSlotId) {
+            const s = await storage.getSlotByCustomId(it.customSlotId);
+            return { ...it, slot: s ? { id: s.id, slotId: s.slotId, mediaType: s.mediaType, pageType: s.pageType, position: s.position, dimensions: s.dimensions } : null };
+          }
+          return it;
+        })
+      );
+      const workOrder = await storage.getWorkOrderByCustomId(ro.customWorkOrderId);
+      const client = workOrder ? await storage.getUser(workOrder.clientId) : undefined;
+      const createdBy = (ro as any).createdById ? await storage.getUser((ro as any).createdById) : undefined;
+      res.json({ releaseOrder: ro, items, workOrder, client, createdBy });
+    } catch (e: any) {
+      res.status(400).json({ error: e.message });
+    }
   });
 
   app.post("/api/payments/settle/:bookingId", async (req, res) => {
@@ -2521,8 +2749,19 @@ export function registerRoutes(app: Express) {
   // Invoices by Work Order
   app.get("/api/invoices/work-order/:id", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const rows = await db.select().from(invoices).where(eq(invoices.workOrderId, id));
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
+      if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      
+      // Query invoices by customWorkOrderId first (if available), then fallback to workOrderId
+      let rows: any[] = [];
+      if (wo.customWorkOrderId) {
+        rows = await db.select().from(invoices).where(eq(invoices.customWorkOrderId, wo.customWorkOrderId));
+      }
+      // If no invoices found by customWorkOrderId, try by workOrderId (legacy support)
+      // Note: Since we removed workOrderId column, this is only for backward compatibility
+      // In practice, all invoices should have customWorkOrderId now
+      
       res.json(rows);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -2550,7 +2789,7 @@ export function registerRoutes(app: Express) {
         invoiceId: inv.id,
         amount: inv.amount,
         bookingId: inv.bookingId,
-        workOrderId: inv.workOrderId,
+        customWorkOrderId: inv.customWorkOrderId,
       });
       
       await db.update(invoices).set({ status: "completed" as any }).where(eq(invoices.id, id));
@@ -2571,13 +2810,13 @@ export function registerRoutes(app: Express) {
         } catch (paymentError: any) {
           console.error(`[POST /api/invoices/${id}/pay] Error creating payment for booking:`, paymentError);
         }
-      } else if (inv.workOrderId) {
+      } else if (inv.customWorkOrderId) {
         // Invoice is linked to a work order - create payments for all bookings in that work order
         try {
-          const wo = await storage.getWorkOrder(inv.workOrderId);
-          if (wo) {
+          const wo = inv.customWorkOrderId ? await storage.getWorkOrderByCustomId(inv.customWorkOrderId) : null;
+          if (wo && wo.customWorkOrderId) {
             // Get all bookings for this work order
-            const allBookings = await db.select().from(bookings).where(eq(bookings.workOrderId, wo.id));
+            const allBookings = await db.select().from(bookings).where(eq(bookings.customWorkOrderId, wo.customWorkOrderId));
             console.log(`[POST /api/invoices/${id}/pay] Found ${allBookings.length} bookings for work order ${wo.id}`);
             
             // Distribute invoice amount across bookings (proportional to booking amounts)
@@ -2616,17 +2855,49 @@ export function registerRoutes(app: Express) {
           console.error(`[POST /api/invoices/${id}/pay] Error creating payments for work order:`, paymentError);
         }
         
-        // After payment rules
-        const wo = await storage.getWorkOrder(inv.workOrderId);
-        if (wo) {
-          const existingRos = await storage.getReleaseOrders();
-          const targetRo = existingRos.find((r: any) => r.workOrderId === wo.id);
-          if (targetRo) {
-            await db.update(releaseOrders)
-              .set({ paymentStatus: "completed" as any })
-              .where(eq(releaseOrders.id, targetRo.id));
+        // After payment rules - check if all invoices are paid and update release order payment status
+        const woForPayment = inv.customWorkOrderId ? await storage.getWorkOrderByCustomId(inv.customWorkOrderId) : null;
+        if (woForPayment && woForPayment.customWorkOrderId) {
+          try {
+            // Check if all invoices for this work order are paid
+            const allInvoices = await db.select().from(invoices).where(eq(invoices.customWorkOrderId, woForPayment.customWorkOrderId));
+            const allInvoicesPaid = allInvoices.length > 0 && allInvoices.every((inv: any) => inv.status === "completed");
+            
+            console.log(`[POST /api/invoices/${id}/pay] Checking payment status for work order ${woForPayment.customWorkOrderId}: ${allInvoices.length} invoices, all paid: ${allInvoicesPaid}`);
+            
+            const existingRos = await storage.getReleaseOrders();
+            const targetRo = existingRos.find((r: any) => r.customWorkOrderId === woForPayment.customWorkOrderId);
+            if (targetRo) {
+              // Update payment status based on whether all invoices are paid
+              const newPaymentStatus = allInvoicesPaid ? "completed" : "partial";
+              console.log(`[POST /api/invoices/${id}/pay] Updating release order ${targetRo.id} payment status to ${newPaymentStatus}`);
+              await db.update(releaseOrders)
+                .set({ paymentStatus: newPaymentStatus as any })
+                .where(eq(releaseOrders.id, targetRo.id));
+              console.log(`[POST /api/invoices/${id}/pay] Release order payment status updated successfully to ${newPaymentStatus}`);
+            } else {
+              console.warn(`[POST /api/invoices/${id}/pay] No release order found for work order ${woForPayment.customWorkOrderId}`);
+            }
+          } catch (roError: any) {
+            console.error(`[POST /api/invoices/${id}/pay] Error updating release order payment status:`, roError);
+            console.error(`[POST /api/invoices/${id}/pay] Error stack:`, roError.stack);
+            // Don't fail payment if release order update fails
           }
-          await storage.updateWorkOrder(wo.id, { status: "paid" } as any);
+          
+          try {
+            // Only update work order status to "paid" if all invoices are paid
+            const allInvoices = await db.select().from(invoices).where(eq(invoices.customWorkOrderId, woForPayment.customWorkOrderId));
+            const allInvoicesPaid = allInvoices.length > 0 && allInvoices.every((inv: any) => inv.status === "completed");
+            if (allInvoicesPaid) {
+              await storage.updateWorkOrder(woForPayment.id, { status: "paid" } as any);
+              console.log(`[POST /api/invoices/${id}/pay] Work order status updated to paid`);
+            } else {
+              console.log(`[POST /api/invoices/${id}/pay] Work order status not updated - ${allInvoices.filter((inv: any) => inv.status !== "completed").length} invoice(s) still pending`);
+            }
+          } catch (woError: any) {
+            console.error(`[POST /api/invoices/${id}/pay] Error updating work order status:`, woError);
+            // Don't fail payment if work order update fails
+          }
         }
       }
       
@@ -2664,13 +2935,13 @@ export function registerRoutes(app: Express) {
         }
       }
 
-      const workOrder = invoice.workOrderId ? await storage.getWorkOrder(invoice.workOrderId) : undefined;
-      const rawItems = invoice.workOrderId ? await storage.getWorkOrderItems(invoice.workOrderId) : [];
+      const workOrder = invoice.customWorkOrderId ? await storage.getWorkOrderByCustomId(invoice.customWorkOrderId) : undefined;
+      const rawItems = invoice.customWorkOrderId ? await storage.getWorkOrderItemsByCustomId(invoice.customWorkOrderId) : [];
       const client = workOrder ? await storage.getUser(workOrder.clientId) : undefined;
 
       const items = await Promise.all(
         rawItems.map(async (item: any) => {
-          const slot = item.slotId ? await storage.getSlot(item.slotId) : null;
+          const slot = item.customSlotId ? await storage.getSlotByCustomId(item.customSlotId) : null;
           return { ...item, slot };
         })
       );
@@ -2693,7 +2964,7 @@ export function registerRoutes(app: Express) {
           if (item.slot.pageType) elements.push(String(item.slot.pageType).replace(/_/g, " ").replace(/\b\w/g, (m: string) => m.toUpperCase()));
           if (item.slot.position) elements.push(String(item.slot.position).replace(/_/g, " ").replace(/\b\w/g, (m: string) => m.toUpperCase()));
           if (item.slot.dimensions) elements.push(item.slot.dimensions);
-          return elements.join(" • ") || `Slot ${item.slotId}`;
+          return elements.join(" • ") || (item.customSlotId ? `Slot ${item.customSlotId}` : `Item ${item.id}`);
         }
         return `Item ${item.id}`;
       };
@@ -2937,9 +3208,10 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/release-orders/:id/accounts-invoice", upload.single("file"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const ro = await storage.getReleaseOrder(id);
+      const idParam = req.params.id;
+      const ro = await getReleaseOrderByIdParam(idParam);
       if (!ro) return res.status(404).json({ error: "Release Order not found" });
+      const id = ro.id; // Use integer ID for operations
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
       if (req.file.mimetype !== "application/pdf") {
         return res.status(400).json({ error: "Only PDF files are allowed" });
@@ -2963,7 +3235,7 @@ export function registerRoutes(app: Express) {
         .where(eq(releaseOrders.id, id));
 
       // Create or update invoice record in invoices table
-      const workOrder = await storage.getWorkOrder((ro as any).workOrderId);
+      const workOrder = ro.customWorkOrderId ? await storage.getWorkOrderByCustomId(ro.customWorkOrderId) : undefined;
       if (workOrder) {
         // Get the total amount from work order
         const totalAmount = Number(workOrder.totalAmount ?? 0);
@@ -2973,7 +3245,7 @@ export function registerRoutes(app: Express) {
           .select()
           .from(invoices)
           .where(and(
-            eq(invoices.workOrderId, (ro as any).workOrderId),
+            eq(invoices.customWorkOrderId, ro.customWorkOrderId),
             eq(invoices.invoiceType, "tax_invoice")
           ));
 
@@ -2983,7 +3255,7 @@ export function registerRoutes(app: Express) {
         // If no invoice exists, create one
         if (existingInvoices.length === 0) {
           await db.insert(invoices).values({
-            workOrderId: (ro as any).workOrderId,
+            customWorkOrderId: ro.customWorkOrderId,
             amount: String(totalAmount),
             status: "pending",
             fileUrl: `/uploads/${fileName}`,
@@ -3030,15 +3302,18 @@ export function registerRoutes(app: Express) {
   // Configure installment plan at Work Order scope -> creates multiple invoices with due dates
   app.post("/api/work-orders/:id/installments", async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const { schedule, generatedById } = req.body as { schedule: Array<{ amount: number; dueDate: string }>; generatedById: number };
-      const wo = await storage.getWorkOrder(id);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
       if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      const id = wo.id; // Use integer ID for operations
+      const { schedule, generatedById } = req.body as { schedule: Array<{ amount: number; dueDate: string }>; generatedById: number };
       if (!Array.isArray(schedule) || schedule.length === 0) {
         return res.status(400).json({ error: "Installment schedule is required" });
       }
       // Remove existing pending invoices (if any) for this WO to avoid duplicates
-      const existing = await db.select().from(invoices).where(eq(invoices.workOrderId, id));
+      const existing = wo?.customWorkOrderId 
+        ? await db.select().from(invoices).where(eq(invoices.customWorkOrderId, wo.customWorkOrderId))
+        : [];
       for (const inv of existing) {
         if (inv.status === "pending") {
           await db.delete(invoices).where(eq(invoices.id, inv.id));
@@ -3047,7 +3322,7 @@ export function registerRoutes(app: Express) {
       // Create invoices for each installment
       for (const part of schedule) {
         await storage.createInvoice({
-          workOrderId: id,
+          customWorkOrderId: wo.customWorkOrderId || undefined,
           amount: String(Number(part.amount) || 0),
           status: "pending" as any,
           generatedById,
@@ -3056,7 +3331,9 @@ export function registerRoutes(app: Express) {
           dueDate: part.dueDate as any,
         } as any);
       }
-      const rows = await db.select().from(invoices).where(eq(invoices.workOrderId, id));
+      const rows = wo?.customWorkOrderId 
+        ? await db.select().from(invoices).where(eq(invoices.customWorkOrderId, wo.customWorkOrderId))
+        : [];
       res.json(rows);
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -3233,10 +3510,11 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/work-orders/:id/upload-proforma", upload.single("file"), async (req, res) => {
     try {
-      const id = parseInt(req.params.id);
-      const { actorId } = (req.body ?? {}) as { actorId?: string };
-      const wo = await storage.getWorkOrder(id);
+      const idParam = req.params.id;
+      const wo = await getWorkOrderByIdParam(idParam);
       if (!wo) return res.status(404).json({ error: "Work Order not found" });
+      const id = wo.id; // Use integer ID for operations
+      const { actorId } = (req.body ?? {}) as { actorId?: string };
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
       if (req.file.mimetype !== "application/pdf") {
         return res.status(400).json({ error: "Only PDF files are allowed" });
@@ -3249,45 +3527,75 @@ export function registerRoutes(app: Express) {
       fs.writeFileSync(path.join(uploadDir, fileName), req.file.buffer);
       const publicPath = `/uploads/${fileName}`;
 
+      // Find existing proforma invoice by customWorkOrderId
+      if (!wo.customWorkOrderId) {
+        console.error(`[upload-proforma] ERROR: Work order ${id} does not have customWorkOrderId`);
+        return res.status(400).json({ error: "Work order does not have a custom ID" });
+      }
+      
+      console.log(`[upload-proforma] Looking for existing proforma invoice for work order ${wo.customWorkOrderId}`);
       const existing = await db
         .select()
         .from(invoices)
-        .where(and(eq(invoices.workOrderId, id), eq(invoices.invoiceType, "proforma" as any)));
-
+        .where(and(eq(invoices.customWorkOrderId, wo.customWorkOrderId), eq(invoices.invoiceType, "proforma" as any)));
+      
+      console.log(`[upload-proforma] Found ${existing.length} existing proforma invoice(s) for work order ${wo.customWorkOrderId}`);
       const total = Number((wo as any)?.totalAmount ?? 0);
       let proforma = existing[0];
 
       if (proforma) {
+        console.log(`[upload-proforma] Updating existing proforma invoice ${proforma.id} for work order ${wo.customWorkOrderId}`);
         if (proforma.fileUrl) {
           try {
-            fs.unlinkSync(path.join(uploadDir, path.basename(proforma.fileUrl)));
-          } catch {}
+            const oldFilePath = path.join(uploadDir, path.basename(proforma.fileUrl));
+            if (fs.existsSync(oldFilePath)) {
+              fs.unlinkSync(oldFilePath);
+              console.log(`[upload-proforma] Deleted old file: ${oldFilePath}`);
+            }
+          } catch (err: any) {
+            console.error(`[upload-proforma] Error deleting old file:`, err);
+          }
         }
         const updated = await db
           .update(invoices)
-          .set({ amount: String(total), fileUrl: publicPath as any, generatedAt: new Date() as any })
+          .set({ 
+            amount: String(total), 
+            fileUrl: publicPath as any, 
+            generatedAt: new Date() as any,
+            customWorkOrderId: wo.customWorkOrderId // Always ensure customWorkOrderId is set correctly
+          })
           .where(eq(invoices.id, proforma.id))
           .returning();
         proforma = updated[0];
+        console.log(`[upload-proforma] Updated invoice:`, { id: proforma.id, customWorkOrderId: (proforma as any).customWorkOrderId, fileUrl: (proforma as any).fileUrl });
       } else {
         const generatedById = actorId ? Number(actorId) : (wo as any)?.quotedById || wo.clientId;
+        if (!wo.customWorkOrderId) {
+          console.error(`[upload-proforma] ERROR: Work order ${id} does not have customWorkOrderId`);
+          return res.status(400).json({ error: "Work order does not have a custom ID. Please ensure the work order was created with a custom ID." });
+        }
+        console.log(`[upload-proforma] Creating new proforma invoice for work order ${wo.customWorkOrderId}, amount: ${total}, generatedById: ${generatedById}`);
         proforma = await storage.createInvoice({
-          workOrderId: id,
+          customWorkOrderId: wo.customWorkOrderId,
           amount: String(total),
           status: "pending" as any,
           generatedById,
           fileUrl: publicPath as any,
           invoiceType: "proforma" as any,
         } as any);
+        console.log(`[upload-proforma] Proforma invoice created:`, { id: proforma.id, customWorkOrderId: (proforma as any).customWorkOrderId, fileUrl: (proforma as any).fileUrl });
       }
 
       try {
         await notificationService.createNotification({
           userId: wo.clientId,
           type: "proforma_ready",
-          message: `Proforma invoice for Work Order #${id} is ready.`,
+          message: `Proforma invoice for Work Order ${wo.customWorkOrderId || `#${id}`} is ready.`,
         });
-      } catch {}
+        console.log(`[upload-proforma] Notification sent to client ${wo.clientId}`);
+      } catch (err: any) {
+        console.error(`[upload-proforma] Error sending notification:`, err);
+      }
 
       // Return the updated/created invoice with all details to ensure client gets the latest
       const [returnedInvoice] = await db
@@ -3295,6 +3603,12 @@ export function registerRoutes(app: Express) {
         .from(invoices)
         .where(eq(invoices.id, proforma.id));
       
+      console.log(`[upload-proforma] Returning invoice to client:`, { 
+        id: returnedInvoice?.id, 
+        customWorkOrderId: (returnedInvoice as any)?.customWorkOrderId, 
+        fileUrl: (returnedInvoice as any)?.fileUrl,
+        invoiceType: (returnedInvoice as any)?.invoiceType
+      });
       res.json({ success: true, invoice: returnedInvoice || proforma });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
@@ -3310,9 +3624,13 @@ export function registerRoutes(app: Express) {
       
       const paymentData = await Promise.all(
         allWorkOrders.map(async (wo) => {
-          const woInvoices = allInvoices.filter((inv) => inv.workOrderId === wo.id);
-          const proformaInvoice = woInvoices.find((inv) => inv.invoiceType === "proforma");
-          const ro = allReleaseOrders.find((r: any) => r.workOrderId === wo.id);
+          const woInvoices = wo.customWorkOrderId 
+            ? allInvoices.filter((inv: any) => inv.customWorkOrderId === wo.customWorkOrderId)
+            : [];
+          const proformaInvoice = woInvoices.find((inv: any) => inv.invoiceType === "proforma");
+          const ro = wo.customWorkOrderId 
+            ? allReleaseOrders.find((r: any) => r.customWorkOrderId === wo.customWorkOrderId)
+            : null;
           
           const totalAmount = Number(wo.totalAmount ?? 0);
           const paidAmount = woInvoices
@@ -3320,7 +3638,7 @@ export function registerRoutes(app: Express) {
             .reduce((sum, inv) => sum + Number(inv.amount ?? 0), 0);
           const pendingAmount = totalAmount - paidAmount;
           
-          const dueDate = proformaInvoice?.dueDate || ro?.dueDate || null;
+          const dueDate = (proformaInvoice as any)?.dueDate || (ro as any)?.dueDate || null;
           const today = new Date();
           today.setHours(0, 0, 0, 0);
           let daysOverdue = 0;
@@ -3364,8 +3682,8 @@ export function registerRoutes(app: Express) {
             invoices: woInvoices,
             items: await Promise.all(
               items.map(async (item: any) => {
-                if (item.slotId) {
-                  const slot = await storage.getSlot(item.slotId);
+                if (item.customSlotId) {
+                  const slot = await storage.getSlotByCustomId(item.customSlotId);
                   return { ...item, slot };
                 }
                 return item;
@@ -3388,12 +3706,16 @@ export function registerRoutes(app: Express) {
       const allInvoices = await db.select().from(invoices);
       const allReleaseOrders = await db.select().from(releaseOrders);
       
-      const alerts: Array<{ type: string; workOrderId: number; clientName: string; amount: number; daysOverdue?: number; dueDate?: string }> = [];
+      const alerts: Array<{ type: string; customWorkOrderId: string | null; clientName: string; amount: number; daysOverdue?: number; dueDate?: string }> = [];
       
       for (const wo of allWorkOrders) {
-        const woInvoices = allInvoices.filter((inv) => inv.workOrderId === wo.id);
-        const proformaInvoice = woInvoices.find((inv) => inv.invoiceType === "proforma");
-        const ro = allReleaseOrders.find((r: any) => r.workOrderId === wo.id);
+        const woInvoices = wo.customWorkOrderId 
+          ? allInvoices.filter((inv: any) => inv.customWorkOrderId === wo.customWorkOrderId)
+          : [];
+        const proformaInvoice = woInvoices.find((inv: any) => inv.invoiceType === "proforma");
+        const ro = wo.customWorkOrderId 
+          ? allReleaseOrders.find((r: any) => r.customWorkOrderId === wo.customWorkOrderId)
+          : null;
         
         const totalAmount = Number(wo.totalAmount ?? 0);
         const paidAmount = woInvoices
@@ -3419,7 +3741,7 @@ export function registerRoutes(app: Express) {
         if (daysOverdue > 0) {
           alerts.push({
             type: "overdue",
-            workOrderId: wo.id,
+            customWorkOrderId: wo.customWorkOrderId || null,
             clientName,
             amount: pendingAmount,
             daysOverdue,
@@ -3428,7 +3750,7 @@ export function registerRoutes(app: Express) {
         } else if (daysOverdue === 0) {
           alerts.push({
             type: "due_soon",
-            workOrderId: wo.id,
+            customWorkOrderId: wo.customWorkOrderId || null,
             clientName,
             amount: pendingAmount,
             dueDate,
@@ -3445,27 +3767,33 @@ export function registerRoutes(app: Express) {
   // Deployment endpoints for IT team
   app.post("/api/deployments/deploy", async (req, res) => {
     try {
-      const { releaseOrderId, workOrderItemId, bannerUrl, deployedById } = req.body;
+      const { customRoNumber, releaseOrderId, workOrderItemId, bannerUrl, deployedById } = req.body;
 
-      if (!releaseOrderId || !workOrderItemId || !bannerUrl || !deployedById) {
+      if ((!customRoNumber && !releaseOrderId) || !workOrderItemId || !bannerUrl || !deployedById) {
         return res.status(400).json({ error: "Missing required fields" });
       }
 
-      // Get release order
-      const ro = await storage.getReleaseOrder(releaseOrderId);
+      // Get release order - try by customRoNumber first, then by ID
+      const ro = customRoNumber 
+        ? await storage.getReleaseOrders().then(ros => ros.find((r: any) => r.customRoNumber === customRoNumber))
+        : releaseOrderId 
+          ? await storage.getReleaseOrder(releaseOrderId)
+          : null;
       if (!ro) {
         return res.status(404).json({ error: "Release Order not found" });
       }
 
       // Get work order item
-      const items = await storage.getWorkOrderItems(ro.workOrderId);
+      const items = ro.customWorkOrderId 
+        ? await storage.getWorkOrderItemsByCustomId(ro.customWorkOrderId)
+        : [];
       const item = items.find((it: any) => it.id === workOrderItemId);
       if (!item) {
         return res.status(404).json({ error: "Work Order Item not found" });
       }
 
       // Get work order
-      const wo = await storage.getWorkOrder(ro.workOrderId);
+      const wo = ro.customWorkOrderId ? await storage.getWorkOrderByCustomId(ro.customWorkOrderId) : null;
       if (!wo) {
         return res.status(404).json({ error: "Work Order not found" });
       }
@@ -3478,10 +3806,10 @@ export function registerRoutes(app: Express) {
 
       // Create deployment record in database
       const deployment = await storage.createDeployment({
-        releaseOrderId,
+        customRoNumber: ro.customRoNumber!,
         workOrderItemId,
         bannerUrl,
-        slotId: item.slotId || null,
+        customSlotId: item.customSlotId || null,
         deployedById: deployedById as any,
         status: "deployed" as any,
       });
@@ -3495,10 +3823,10 @@ export function registerRoutes(app: Express) {
         entityId: deployment.id,
         metadata: JSON.stringify({
           releaseOrderId,
-          workOrderId: ro.workOrderId,
+          customWorkOrderId: ro.customWorkOrderId || null,
           workOrderItemId,
           bannerUrl,
-          slotId: item.slotId,
+          customSlotId: item.customSlotId,
           deploymentId: deployment.id,
           deployedAt: deployment.deployedAt,
         }),
@@ -3512,7 +3840,7 @@ export function registerRoutes(app: Express) {
           releaseOrderId,
           workOrderItemId,
           bannerUrl,
-          slotId: item.slotId,
+          customSlotId: item.customSlotId,
           deployedAt: deployment.deployedAt,
           status: deployment.status,
         },

@@ -64,7 +64,7 @@ export default function WorkOrdersPage() {
   });
 
   const updateItemMutation = useMutation({
-    mutationFn: async ({ workOrderId, itemId, unitPrice }: { workOrderId: number; itemId: number; unitPrice: number }) => {
+    mutationFn: async ({ workOrderId, itemId, unitPrice }: { workOrderId: number | string; itemId: number; unitPrice: number }) => {
       const res = await fetch(`/api/work-orders/${workOrderId}/items/${itemId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -83,7 +83,7 @@ export default function WorkOrdersPage() {
   });
 
   const sendQuoteMutation = useMutation({
-    mutationFn: async (workOrderId: number) => {
+    mutationFn: async (workOrderId: number | string) => {
       const res = await fetch(`/api/work-orders/${workOrderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -159,11 +159,11 @@ export default function WorkOrdersPage() {
               // Debug: Log to see what data we're getting
               // console.log('Work Order:', workOrder.id, 'Client Name:', workOrder.clientName);
               return (
-              <Card key={workOrder.id} className="hover:shadow-sm transition cursor-pointer" onClick={() => navigate(`/work-orders/${workOrder.id}`)}>
+              <Card key={workOrder.id} className="hover:shadow-sm transition cursor-pointer" onClick={() => navigate(`/work-orders/${workOrder.customWorkOrderId || workOrder.id}`)}>
                 <CardHeader>
                   <div className="flex items-center justify-between">
                     <div>
-                      <CardTitle>{`${workOrder.clientName || workOrder.businessSchoolName || "Client"}_Work Order #${workOrder.id}`}</CardTitle>
+                      <CardTitle>{`${workOrder.clientName || workOrder.businessSchoolName || "Client"}_${workOrder.customWorkOrderId || `Work Order #${workOrder.id}`}`}</CardTitle>
                     <CardDescription>
                       {workOrder.businessSchoolName || "—"} • Items: {items.length}
                     </CardDescription>
@@ -275,14 +275,14 @@ export default function WorkOrdersPage() {
       <Dialog open={!!rejectWo} onOpenChange={(open) => !open && setRejectWo(null)}>
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
-            <DialogTitle>Reject Work Order #{rejectWo?.id}</DialogTitle>
+            <DialogTitle>Reject Work Order {rejectWo?.customWorkOrderId || `#${rejectWo?.id}`}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="text-sm text-muted-foreground">Add an optional reason for the client.</div>
             <Textarea value={rejectReason} onChange={(e) => setRejectReason(e.target.value)} placeholder="Reason (optional)" />
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setRejectWo(null)}>Cancel</Button>
-              <Button variant="destructive" onClick={() => rejectMutation.mutate({ id: rejectWo!.id, reason: rejectReason })} disabled={rejectMutation.isPending}>
+              <Button variant="destructive" onClick={() => rejectMutation.mutate({ id: rejectWo!.customWorkOrderId || rejectWo!.id, reason: rejectReason })} disabled={rejectMutation.isPending}>
                 {rejectMutation.isPending ? "Rejecting…" : "Reject"}
               </Button>
             </div>

@@ -139,7 +139,7 @@ export default function ITSlotMasterPage() {
             <Card key={slot.id}>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">Slot #{slot.id}</CardTitle>
+                  <CardTitle className="text-lg">Slot {slot.slotId || `#${slot.id}`}</CardTitle>
                   <Badge variant="secondary" className="capitalize">{slot.status}</Badge>
                 </div>
                 <CardDescription className="capitalize">{slot.mediaType}</CardDescription>

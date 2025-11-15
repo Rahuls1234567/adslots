@@ -56,15 +56,15 @@ export default function ClientPayments() {
 function WorkOrderInvoices({ workOrder, onPaid }: { workOrder: any; onPaid: () => void }) {
   const [, navigate] = useLocation();
   const { data: invoices = [], isLoading } = useQuery<any[]>({
-    queryKey: [`/api/invoices/work-order/${workOrder.id}`],
+    queryKey: [`/api/invoices/work-order/${workOrder.customWorkOrderId || workOrder.id}`],
   });
   if (isLoading) return <Skeleton className="h-20 w-full" />;
   if (invoices.length === 0) return null; // Hide cards without invoices; visible only after Accounts approval
   return (
-    <Card onClick={() => navigate(`/payments/work-orders/${workOrder.id}`)} className="cursor-pointer">
+    <Card onClick={() => navigate(`/payments/work-orders/${workOrder.customWorkOrderId || workOrder.id}`)} className="cursor-pointer">
       <CardHeader className="flex flex-row items-center justify-between">
         <div>
-          <CardTitle>Work Order #{workOrder.id}</CardTitle>
+          <CardTitle>{workOrder.customWorkOrderId || `Work Order #${workOrder.id}`}</CardTitle>
           <CardDescription>Payment Type: {workOrder.paymentMode === 'full' ? 'Prepayment' : workOrder.paymentMode === 'pay_later' ? 'Postpayment' : 'Installments'}</CardDescription>
         </div>
         <Badge variant="secondary">{String(workOrder.status).replace(/_/g, ' ')}</Badge>

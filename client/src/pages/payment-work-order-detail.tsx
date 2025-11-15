@@ -30,11 +30,13 @@ export default function PaymentWorkOrderDetailPage() {
   const { user } = useAuth();
   const [loc] = useLocation();
   const idStr = useMemo(() => loc.split("/").pop() || "", [loc]);
-  const workOrderId = Number(idStr);
+  // Check if it's a custom work order ID (starts with WO) or an integer ID
+  const isCustomId = idStr.startsWith('WO');
+  const workOrderId = isCustomId ? idStr : Number(idStr);
 
   const { data: workOrderResponse, isLoading: workOrderLoading, refetch } = useQuery<{ workOrder: WorkOrder; items: any[]; releaseOrderId: number | null; releaseOrderStatus: string | null }>({
     queryKey: [`/api/work-orders/${workOrderId}`],
-    enabled: Number.isFinite(workOrderId),
+    enabled: isCustomId ? !!idStr : Number.isFinite(workOrderId as number),
   });
 
   const workOrder = workOrderResponse?.workOrder;
@@ -47,8 +49,8 @@ export default function PaymentWorkOrderDetailPage() {
   });
 
   const { data: invoices = [], isLoading: invoicesLoading, refetch: refetchInvoices } = useQuery<any[]>({
-    queryKey: Number.isFinite(workOrderId) ? [`/api/invoices/work-order/${workOrderId}`] : [],
-    enabled: Number.isFinite(workOrderId),
+    queryKey: (isCustomId ? !!idStr : Number.isFinite(workOrderId as number)) ? [`/api/invoices/work-order/${workOrderId}`] : [],
+    enabled: isCustomId ? !!idStr : Number.isFinite(workOrderId as number),
   });
 
   const proformaInvoice = useMemo(() => invoices.find((inv) => inv.invoiceType === "proforma") ?? invoices[0], [invoices]);
@@ -120,7 +122,7 @@ export default function PaymentWorkOrderDetailPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Payment Overview • Work Order #{workOrder.id}</h1>
+          <h1 className="text-2xl font-bold">Payment Overview • Work Order {workOrder.customWorkOrderId || `#${workOrder.id}`}</h1>
           <p className="text-muted-foreground">
             Created {new Date(workOrder.createdAt).toLocaleString()}
             {workOrder.createdByName ? ` • ${workOrder.createdByName}` : ""}
@@ -194,7 +196,7 @@ export default function PaymentWorkOrderDetailPage() {
                       : "WhatsApp Campaign"
                     : item.slot
                     ? `${item.slot.mediaType} • ${item.slot.pageType} • ${item.slot.position}`
-                    : `Slot #${item.slotId}`;
+                    : `Slot ${item.customSlotId || item.slot?.slotId || (item.slotId ? `#${item.slotId}` : 'Unknown')}`;
                   return (
                     <div key={item.id} className="flex items-center justify-between border rounded-md p-3 text-sm">
                       <div className="space-y-0.5">
@@ -321,7 +323,7 @@ export default function PaymentWorkOrderDetailPage() {
                 <>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">RO Number</span>
-                    <span className="font-medium">{releaseOrder.roNumber || `RO-${releaseOrder.id}`}</span>
+                    <span className="font-medium">{releaseOrder.customRoNumber || releaseOrder.roNumber || `RO-${releaseOrder.id}`}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Status</span>

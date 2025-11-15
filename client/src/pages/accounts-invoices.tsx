@@ -54,10 +54,11 @@ export default function AccountsInvoicesPage() {
 
   // Get client names for invoices
   const invoicesWithDetails = useMemo(() => {
-    return invoices.map((invoice) => {
-      const workOrder = workOrders.find((wo) => wo.workOrder.id === invoice.workOrderId)?.workOrder;
+    return invoices.map((invoice: any) => {
+      const workOrder = workOrders.find((wo) => wo.workOrder.id === invoice.workOrderId || wo.workOrder.customWorkOrderId === invoice.customWorkOrderId)?.workOrder;
       return {
         ...invoice,
+        customWorkOrderId: invoice.customWorkOrderId || workOrder?.customWorkOrderId || null,
         workOrder,
         clientName: workOrder?.businessSchoolName || `Client #${workOrder?.clientId}` || "Unknown",
         clientId: workOrder?.clientId || null,
@@ -75,6 +76,7 @@ export default function AccountsInvoicesPage() {
           invoice.id.toString().includes(search) ||
           invoice.clientName.toLowerCase().includes(search) ||
           (invoice.workOrderId && invoice.workOrderId.toString().includes(search)) ||
+          (invoice.customWorkOrderId && invoice.customWorkOrderId.toLowerCase().includes(search.toLowerCase())) ||
           invoice.amount.includes(search);
         if (!matchesSearch) return false;
       }
@@ -241,7 +243,7 @@ export default function AccountsInvoicesPage() {
                     <div>
                       <CardTitle className="text-lg">Invoice #{invoice.id}</CardTitle>
                       <CardDescription>
-                        {invoice.clientName} • WO #{invoice.workOrderId || "N/A"}
+                        {invoice.clientName} • {invoice.customWorkOrderId || (invoice.workOrderId ? `WO #${invoice.workOrderId}` : "N/A")}
                         {invoice.dueDate && ` • Due: ${new Date(invoice.dueDate).toLocaleDateString()}`}
                       </CardDescription>
                     </div>
@@ -304,7 +306,7 @@ export default function AccountsInvoicesPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => navigate(`/work-orders/${invoice.workOrderId}`)}
+                            onClick={() => navigate(`/work-orders/${invoice.customWorkOrderId || invoice.workOrderId}`)}
                           >
                             View WO
                           </Button>
@@ -336,7 +338,7 @@ export default function AccountsInvoicesPage() {
                     <div>
                       <CardTitle className="text-lg">Invoice #{invoice.id}</CardTitle>
                       <CardDescription>
-                        {invoice.clientName} • WO #{invoice.workOrderId || "N/A"}
+                        {invoice.clientName} • {invoice.customWorkOrderId || (invoice.workOrderId ? `WO #${invoice.workOrderId}` : "N/A")}
                         {invoice.dueDate && ` • Due: ${new Date(invoice.dueDate).toLocaleDateString()}`}
                       </CardDescription>
                     </div>
@@ -393,7 +395,7 @@ export default function AccountsInvoicesPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => navigate(`/work-orders/${invoice.workOrderId}`)}
+                            onClick={() => navigate(`/work-orders/${invoice.customWorkOrderId || invoice.workOrderId}`)}
                           >
                             View WO
                           </Button>
@@ -425,7 +427,7 @@ export default function AccountsInvoicesPage() {
                     <div>
                       <CardTitle className="text-lg">Invoice #{invoice.id}</CardTitle>
                       <CardDescription>
-                        {invoice.clientName} • WO #{invoice.workOrderId || "N/A"}
+                        {invoice.clientName} • {invoice.customWorkOrderId || (invoice.workOrderId ? `WO #${invoice.workOrderId}` : "N/A")}
                         {invoice.dueDate && ` • Due: ${new Date(invoice.dueDate).toLocaleDateString()}`}
                       </CardDescription>
                     </div>
@@ -473,7 +475,7 @@ export default function AccountsInvoicesPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => navigate(`/work-orders/${invoice.workOrderId}`)}
+                            onClick={() => navigate(`/work-orders/${invoice.customWorkOrderId || invoice.workOrderId}`)}
                           >
                             View WO
                           </Button>
@@ -505,7 +507,7 @@ export default function AccountsInvoicesPage() {
                     <div>
                       <CardTitle className="text-lg">Invoice #{invoice.id}</CardTitle>
                       <CardDescription>
-                        {invoice.clientName} • WO #{invoice.workOrderId || "N/A"}
+                        {invoice.clientName} • {invoice.customWorkOrderId || (invoice.workOrderId ? `WO #${invoice.workOrderId}` : "N/A")}
                       </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
@@ -552,7 +554,7 @@ export default function AccountsInvoicesPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => navigate(`/work-orders/${invoice.workOrderId}`)}
+                            onClick={() => navigate(`/work-orders/${invoice.customWorkOrderId || invoice.workOrderId}`)}
                           >
                             View WO
                           </Button>

@@ -37,10 +37,10 @@ export default function ReleaseOrdersPage() {
           ) : (
             <div className="space-y-2">
               {data.map(({ releaseOrder, items }) => (
-                <Card key={releaseOrder.id} className="hover:shadow-sm transition cursor-pointer" onClick={() => navigate(`/release-orders/${releaseOrder.id}`)}>
+                <Card key={releaseOrder.id} className="hover:shadow-sm transition cursor-pointer" onClick={() => navigate(`/release-orders/${releaseOrder.customRoNumber || releaseOrder.id}`)}>
                   <CardHeader className="flex flex-row items-center justify-between">
                     <div>
-                      <CardTitle>RO #{releaseOrder.id} • WO #{releaseOrder.workOrderId}</CardTitle>
+                      <CardTitle>{releaseOrder.customRoNumber || `RO #${releaseOrder.id}`} • {releaseOrder.workOrder?.customWorkOrderId || `WO #${releaseOrder.workOrderId}`}</CardTitle>
                       <CardDescription>
                         {new Date(releaseOrder.issuedAt).toLocaleString()}
                       </CardDescription>

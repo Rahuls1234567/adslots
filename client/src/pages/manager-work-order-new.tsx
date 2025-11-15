@@ -374,7 +374,7 @@ export default function ManagerWorkOrderNewPage() {
                         createdById: user?.id,
                       }),
                     }).then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(new Error(e.error || "Request failed")))));
-                    const newId = res?.workOrder?.id;
+                    const newId = res?.workOrder?.customWorkOrderId || res?.workOrder?.id;
                     toast({ title: "Work Order created", description: "You can now set pricing and send a quote." });
                     if (newId) setLocation(`/work-orders/${newId}`);
                     else setLocation(`/work-orders`);

@@ -20,7 +20,7 @@ import {
   activityLogs, type ActivityLog, type InsertActivityLog,
   deployments, type Deployment, type InsertDeployment
 } from "@shared/schema";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, like, or } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -81,7 +81,7 @@ export interface IStorage {
   getInvoicesByBooking(bookingId: number): Promise<Invoice[]>;
 
   // Work Orders
-  createWorkOrder(data: InsertWorkOrder): Promise<WorkOrder>;
+  createWorkOrder(data: InsertWorkOrder, items?: Array<{ customSlotId?: string | null; addonType?: "email" | "whatsapp" | null }>): Promise<WorkOrder>;
   addWorkOrderItems(items: InsertWorkOrderItem[]): Promise<WorkOrderItem[]>;
   getWorkOrder(id: number): Promise<WorkOrder | undefined>;
   getWorkOrderItems(workOrderId: number): Promise<WorkOrderItem[]>;
@@ -94,6 +94,7 @@ export interface IStorage {
   addReleaseOrderItems(items: InsertReleaseOrderItem[]): Promise<ReleaseOrderItem[]>;
   getReleaseOrders(): Promise<ReleaseOrder[]>;
   getReleaseOrder(id: number): Promise<ReleaseOrder | undefined>;
+  getReleaseOrderByCustomId(customRoNumber: string): Promise<ReleaseOrder | undefined>;
   
   // Analytics
   createAnalytics(analytics: InsertAnalytics): Promise<Analytics>;
@@ -174,8 +175,63 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async getSlotByCustomId(customSlotId: string): Promise<Slot | undefined> {
+    const result = await db.select().from(slots).where(eq(slots.slotId, customSlotId));
+    return result[0];
+  }
+
+  /**
+   * Generate the next slot ID based on media type
+   * Format: web0001, mob0001, mag0001, emi0001, wap0001
+   */
+  private async generateNextSlotId(mediaType: string): Promise<string> {
+    // Map media types to prefixes
+    const prefixMap: Record<string, string> = {
+      website: "web",
+      mobile: "mob",
+      magazine: "mag",
+      email: "emi",
+      whatsapp: "wap",
+    };
+    
+    const prefix = prefixMap[mediaType.toLowerCase()] || mediaType.slice(0, 3).toLowerCase();
+    
+    // Find all slots with matching prefix
+    const allSlots = await db.select({ slotId: slots.slotId }).from(slots);
+    const matchingSlots = allSlots
+      .filter(s => s.slotId && s.slotId.toLowerCase().startsWith(prefix.toLowerCase()))
+      .map(s => s.slotId!);
+    
+    // Extract the highest number
+    let maxNumber = 0;
+    const prefixPattern = new RegExp(`^${prefix}(\\d+)$`, "i");
+    
+    for (const slotId of matchingSlots) {
+      const match = slotId.match(prefixPattern);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (num > maxNumber) {
+          maxNumber = num;
+        }
+      }
+    }
+    
+    // Generate next number
+    const nextNumber = maxNumber + 1;
+    return `${prefix}${String(nextNumber).padStart(4, "0")}`;
+  }
+
   async createSlot(slot: InsertSlot): Promise<Slot> {
-    const result = await db.insert(slots).values(slot).returning();
+    // Generate slot ID if not provided
+    let slotId = slot.slotId;
+    if (!slotId) {
+      slotId = await this.generateNextSlotId(slot.mediaType as string);
+    }
+    
+    const result = await db.insert(slots).values({
+      ...slot,
+      slotId,
+    }).returning();
     return result[0];
   }
 
@@ -256,6 +312,7 @@ export class DbStorage implements IStorage {
   }
 
   async createBooking(booking: InsertBooking): Promise<Booking> {
+    // customSlotId is now required and passed directly
     const result = await db.insert(bookings).values(booking).returning();
     return result[0];
   }
@@ -398,13 +455,244 @@ export class DbStorage implements IStorage {
     return await db.select().from(invoices).where(eq(invoices.bookingId, bookingId));
   }
 
+  /**
+   * Determine the primary media type for a work order based on its items
+   * Priority: Slots (by media type) > Email addon > WhatsApp addon
+   */
+  private async determineWorkOrderMediaType(workOrderId: number): Promise<"email" | "whatsapp" | "website" | "magazine"> {
+    try {
+      // Get work order items
+      const items = await this.getWorkOrderItems(workOrderId);
+      
+      if (items.length === 0) {
+        console.warn(`[Storage.determineWorkOrderMediaType] Work order ${workOrderId} has no items, defaulting to website`);
+        return "website"; // Default to website if no items
+      }
+      
+      // Check for slots first (slots take priority)
+      const slotItems = items.filter(item => item.customSlotId);
+      if (slotItems.length > 0) {
+        // Get media types from slots
+        const mediaTypes = await Promise.all(
+          slotItems.map(async (item) => {
+            if (!item.customSlotId) return null;
+            try {
+              const slot = await this.getSlotByCustomId(item.customSlotId);
+              if (!slot) {
+                console.warn(`[Storage.determineWorkOrderMediaType] Slot not found for customSlotId: ${item.customSlotId}`);
+                return null;
+              }
+              return slot.mediaType;
+            } catch (error: any) {
+              console.error(`[Storage.determineWorkOrderMediaType] Error fetching slot ${item.customSlotId}:`, error);
+              return null;
+            }
+          })
+        );
+        
+        // Filter out null values
+        const validMediaTypes = mediaTypes.filter(type => type !== null) as string[];
+        
+        if (validMediaTypes.length > 0) {
+          // Determine primary media type (prioritize website > magazine > mobile > email)
+          const typePriority: Record<string, number> = { website: 4, magazine: 3, mobile: 2, email: 1 };
+          let primaryType: string | null = null;
+          let maxPriority = 0;
+          
+          for (const type of validMediaTypes) {
+            if (type && typePriority[type] > maxPriority) {
+              maxPriority = typePriority[type];
+              primaryType = type;
+            }
+          }
+          
+          // Map to our prefixes
+          if (primaryType === "website") return "website";
+          if (primaryType === "magazine") return "magazine";
+          if (primaryType === "mobile") return "website"; // Mobile uses WEB prefix
+          if (primaryType === "email") return "email";
+        }
+      }
+      
+      // Check for addons if no slots or slots failed
+      const emailAddon = items.find(item => item.addonType === "email");
+      if (emailAddon) return "email";
+      
+      const whatsappAddon = items.find(item => item.addonType === "whatsapp");
+      if (whatsappAddon) return "whatsapp";
+      
+      // Default to website if unclear
+      console.warn(`[Storage.determineWorkOrderMediaType] Could not determine media type for work order ${workOrderId}, defaulting to website`);
+      return "website";
+    } catch (error: any) {
+      console.error(`[Storage.determineWorkOrderMediaType] Error determining media type for work order ${workOrderId}:`, error);
+      // Default to website on error to prevent blocking
+      return "website";
+    }
+  }
+
+  /**
+   * Generate the next work order ID based on media type and year
+   * Format: WOWEB25260001, WOEMI25260001, WOWAP25260001, WOMAG25260001
+   */
+  private async generateNextWorkOrderId(mediaType: "email" | "whatsapp" | "website" | "magazine"): Promise<string> {
+    // Map media types to prefixes
+    const prefixMap: Record<string, string> = {
+      email: "EMI",
+      whatsapp: "WAP",
+      website: "WEB",
+      magazine: "MAG",
+    };
+    
+    const prefix = prefixMap[mediaType] || "WEB";
+    const currentYear = new Date().getFullYear();
+    const year = String(currentYear); // Full 4-digit year (2026, 2027, etc.)
+    
+    // Find all work orders with matching prefix and year
+    const allWorkOrders = await db.select({ customWorkOrderId: workOrders.customWorkOrderId }).from(workOrders);
+    const pattern = new RegExp(`^WO${prefix}${year}(\\d+)$`, "i");
+    
+    let maxNumber = 0;
+    for (const wo of allWorkOrders) {
+      if (wo.customWorkOrderId) {
+        const match = wo.customWorkOrderId.match(pattern);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num > maxNumber) {
+            maxNumber = num;
+          }
+        }
+      }
+    }
+    
+    // Generate next number
+    const nextNumber = maxNumber + 1;
+    return `WO${prefix}${year}${String(nextNumber).padStart(4, "0")}`;
+  }
+
+  /**
+   * Generate the next release order ID based on work order's media type and year
+   * Format: ROWEB25260001, ROEMI25260001, ROWAP25260001, ROMAG25260001
+   */
+  private async generateNextReleaseOrderId(workOrderId: number): Promise<string> {
+    // Get the work order to determine media type
+    const mediaType = await this.determineWorkOrderMediaType(workOrderId);
+    
+    // Map media types to prefixes
+    const prefixMap: Record<string, string> = {
+      email: "EMI",
+      whatsapp: "WAP",
+      website: "WEB",
+      magazine: "MAG",
+    };
+    
+    const prefix = prefixMap[mediaType] || "WEB";
+    const currentYear = new Date().getFullYear();
+    const year = String(currentYear); // Full 4-digit year (2026, 2027, etc.)
+    
+    // Find all release orders with matching prefix and year
+    const allReleaseOrders = await db.select({ customRoNumber: releaseOrders.customRoNumber }).from(releaseOrders);
+    const pattern = new RegExp(`^RO${prefix}${year}(\\d+)$`, "i");
+    
+    let maxNumber = 0;
+    for (const ro of allReleaseOrders) {
+      if (ro.customRoNumber) {
+        const match = ro.customRoNumber.match(pattern);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num > maxNumber) {
+            maxNumber = num;
+          }
+        }
+      }
+    }
+    
+    // Generate next number
+    const nextNumber = maxNumber + 1;
+    return `RO${prefix}${year}${String(nextNumber).padStart(4, "0")}`;
+  }
+
+  /**
+   * Determine media type from work order items (passed directly, not from database)
+   */
+  async determineMediaTypeFromItems(items: Array<{ customSlotId?: string | null; addonType?: "email" | "whatsapp" | null }>): Promise<"email" | "whatsapp" | "website" | "magazine"> {
+    // Check for slots first (slots take priority)
+    const slotItems = items.filter(item => item.customSlotId);
+    if (slotItems.length > 0) {
+      // Get media types from slots
+      const mediaTypes = await Promise.all(
+        slotItems.map(async (item) => {
+          if (!item.customSlotId) return null;
+          const slot = await this.getSlotByCustomId(item.customSlotId);
+          return slot?.mediaType;
+        })
+      );
+      
+      // Determine primary media type (prioritize website > magazine > mobile > email)
+      const typePriority: Record<string, number> = { website: 4, magazine: 3, mobile: 2, email: 1 };
+      let primaryType: string | null = null;
+      let maxPriority = 0;
+      
+      for (const type of mediaTypes) {
+        if (type && typePriority[type] > maxPriority) {
+          maxPriority = typePriority[type];
+          primaryType = type;
+        }
+      }
+      
+      // Map to our prefixes
+      if (primaryType === "website") return "website";
+      if (primaryType === "magazine") return "magazine";
+      if (primaryType === "mobile") return "website"; // Mobile uses WEB prefix
+      if (primaryType === "email") return "email";
+    }
+    
+    // Check for addons if no slots
+    const emailAddon = items.find(item => item.addonType === "email");
+    if (emailAddon) return "email";
+    
+    const whatsappAddon = items.find(item => item.addonType === "whatsapp");
+    if (whatsappAddon) return "whatsapp";
+    
+    // Default to website if unclear
+    return "website";
+  }
+
   // Work Orders
-  async createWorkOrder(data: InsertWorkOrder): Promise<WorkOrder> {
-    const result = await db.insert(workOrders).values(data).returning();
-    return result[0];
+  async createWorkOrder(data: InsertWorkOrder, items?: Array<{ customSlotId?: string | null; addonType?: "email" | "whatsapp" | null }>): Promise<WorkOrder> {
+    // Determine media type and generate custom ID before creating
+    let customWorkOrderId = data.customWorkOrderId;
+    if (!customWorkOrderId && items) {
+      const mediaType = await this.determineMediaTypeFromItems(items);
+      customWorkOrderId = await this.generateNextWorkOrderId(mediaType);
+    }
+    
+    const result = await db.insert(workOrders).values({
+      ...data,
+      customWorkOrderId,
+    }).returning();
+    
+    const wo = result[0];
+    
+    // If we couldn't determine from items, try after items are added (fallback)
+    if (!wo.customWorkOrderId) {
+      const mediaType = await this.determineWorkOrderMediaType(wo.id);
+      const customId = await this.generateNextWorkOrderId(mediaType);
+      
+      // Update with custom ID
+      const updated = await db.update(workOrders)
+        .set({ customWorkOrderId: customId })
+        .where(eq(workOrders.id, wo.id))
+        .returning();
+      
+      return updated[0] || wo;
+    }
+    
+    return wo;
   }
 
   async addWorkOrderItems(items: InsertWorkOrderItem[]): Promise<WorkOrderItem[]> {
+    // customSlotId and customWorkOrderId are now passed directly (null for addons)
     const result = await db.insert(workOrderItems).values(items).returning();
     return result;
   }
@@ -414,8 +702,20 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async getWorkOrderByCustomId(customWorkOrderId: string): Promise<WorkOrder | undefined> {
+    const result = await db.select().from(workOrders).where(eq(workOrders.customWorkOrderId, customWorkOrderId));
+    return result[0];
+  }
+
   async getWorkOrderItems(workOrderId: number): Promise<WorkOrderItem[]> {
-    return await db.select().from(workOrderItems).where(eq(workOrderItems.workOrderId, workOrderId));
+    // Get work order to find custom ID, then query by custom ID
+    const wo = await this.getWorkOrder(workOrderId);
+    if (!wo || !wo.customWorkOrderId) return [];
+    return await db.select().from(workOrderItems).where(eq(workOrderItems.customWorkOrderId, wo.customWorkOrderId));
+  }
+
+  async getWorkOrderItemsByCustomId(customWorkOrderId: string): Promise<WorkOrderItem[]> {
+    return await db.select().from(workOrderItems).where(eq(workOrderItems.customWorkOrderId, customWorkOrderId));
   }
 
   async updateWorkOrder(id: number, data: Partial<InsertWorkOrder>): Promise<WorkOrder | undefined> {
@@ -439,11 +739,54 @@ export class DbStorage implements IStorage {
 
   // Release Orders
   async createReleaseOrder(data: InsertReleaseOrder): Promise<ReleaseOrder> {
-    const result = await db.insert(releaseOrders).values(data).returning();
-    return result[0];
+    // Generate custom RO number if not provided
+    let customRoNumber = data.customRoNumber;
+    if (!customRoNumber && data.customWorkOrderId) {
+      try {
+        // Get work order by custom ID to determine media type
+        const wo = await this.getWorkOrderByCustomId(data.customWorkOrderId);
+        if (!wo) {
+          throw new Error(`Work order not found with custom ID: ${data.customWorkOrderId}`);
+        }
+        if (!wo.id) {
+          throw new Error(`Work order ${data.customWorkOrderId} does not have an integer ID`);
+        }
+        console.log(`[Storage.createReleaseOrder] Generating RO number for work order ${wo.id} (custom: ${data.customWorkOrderId})`);
+        customRoNumber = await this.generateNextReleaseOrderId(wo.id);
+        console.log(`[Storage.createReleaseOrder] Generated RO number: ${customRoNumber}`);
+      } catch (error: any) {
+        console.error(`[Storage.createReleaseOrder] Error generating RO number:`, error);
+        throw new Error(`Failed to generate release order number: ${error.message}`);
+      }
+    }
+    
+    if (!customRoNumber) {
+      throw new Error("Cannot create release order: customRoNumber is required but was not generated");
+    }
+    
+    try {
+      const result = await db.insert(releaseOrders).values({
+        ...data,
+        customRoNumber,
+        roNumber: customRoNumber, // Also set legacy roNumber field for backward compatibility
+      }).returning();
+      
+      if (!result[0]) {
+        throw new Error("Failed to create release order - no result returned from database");
+      }
+      
+      console.log(`[Storage.createReleaseOrder] Release order created successfully with ID: ${result[0].id}, RO number: ${result[0].customRoNumber}`);
+      return result[0];
+    } catch (error: any) {
+      console.error(`[Storage.createReleaseOrder] Database error:`, error);
+      console.error(`[Storage.createReleaseOrder] Error code:`, error.code);
+      console.error(`[Storage.createReleaseOrder] Error detail:`, error.detail);
+      throw error;
+    }
   }
 
   async addReleaseOrderItems(items: InsertReleaseOrderItem[]): Promise<ReleaseOrderItem[]> {
+    // customRoNumber is now passed directly instead of releaseOrderId
     const result = await db.insert(releaseOrderItems).values(items).returning();
     return result;
   }
@@ -455,6 +798,11 @@ export class DbStorage implements IStorage {
 
   async getReleaseOrder(id: number): Promise<ReleaseOrder | undefined> {
     const result = await db.select().from(releaseOrders).where(eq(releaseOrders.id, id));
+    return result[0];
+  }
+
+  async getReleaseOrderByCustomId(customRoNumber: string): Promise<ReleaseOrder | undefined> {
+    const result = await db.select().from(releaseOrders).where(eq(releaseOrders.customRoNumber, customRoNumber));
     return result[0];
   }
 
@@ -535,6 +883,7 @@ export class DbStorage implements IStorage {
   async createDeployment(deployment: InsertDeployment): Promise<Deployment> {
     console.log("[Storage.createDeployment] Inserting deployment:", JSON.stringify(deployment, null, 2));
     try {
+      // customSlotId is now passed directly
       const result = await db.insert(deployments).values(deployment).returning();
       console.log("[Storage.createDeployment] Deployment inserted successfully, ID:", result[0]?.id);
       if (!result[0]) {
@@ -583,3 +932,4 @@ export class DbStorage implements IStorage {
 }
 
 export const storage = new DbStorage();
+

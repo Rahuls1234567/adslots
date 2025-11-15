@@ -493,7 +493,7 @@ export default function ManagerSlotsPage() {
               {filteredSlots.map((slot) => (
                 <div key={slot.id} className="space-y-2 rounded-lg border bg-card p-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold">#{slot.id}</span>
+                    <span className="text-sm font-semibold">{slot.slotId || `#${slot.id}`}</span>
                     <Badge variant={slot.derivedStatus === "available" ? "secondary" : slot.derivedStatus === "booked" || slot.derivedStatus === "blocked" ? "destructive" : "outline"}>
                       {slot.derivedStatus.replace(/_/g, " ")}
                     </Badge>

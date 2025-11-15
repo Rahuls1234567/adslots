@@ -10,6 +10,7 @@ import { queryClient } from "@/lib/queryClient";
 interface Invoice {
   id: number;
   workOrderId: number | null;
+  customWorkOrderId: string | null;
   amount: string;
   status: string;
   invoiceType?: string;
@@ -38,12 +39,24 @@ export default function AccountsDashboard() {
     return workOrders
       .filter(({ workOrder }) => !!workOrder.poUrl)
       .map(({ workOrder, items }) => {
-        const orderInvoices = invoices.filter((inv) => inv.workOrderId === workOrder.id);
+        // Filter invoices by customWorkOrderId (primary) or workOrderId (legacy fallback)
+        const orderInvoices = invoices.filter((inv) => {
+          // Primary: Match by customWorkOrderId if both exist
+          if (workOrder.customWorkOrderId && inv.customWorkOrderId) {
+            return inv.customWorkOrderId === workOrder.customWorkOrderId;
+          }
+          // Fallback: Match by workOrderId (legacy support)
+          if (inv.workOrderId !== null && inv.workOrderId !== undefined) {
+            return inv.workOrderId === workOrder.id;
+          }
+          return false;
+        });
         const proformaInvoice = orderInvoices.find((inv) => inv.invoiceType === "proforma");
         const hasInvoices = orderInvoices.length > 0;
         const isPaid = hasInvoices && orderInvoices.every((inv) => inv.status === "completed");
         return {
           id: workOrder.id,
+          customWorkOrderId: workOrder.customWorkOrderId || null,
           poFile: workOrder.poUrl as string,
           clientName: workOrder.businessSchoolName || `Client #${workOrder.clientId}`,
           createdAt: workOrder.createdAt,
@@ -60,9 +73,17 @@ export default function AccountsDashboard() {
   const paidPOs = purchaseOrders.filter((po) => po.paymentStatus === "Paid");
   const unpaidPOs = purchaseOrders.filter((po) => po.paymentStatus !== "Paid");
 
-  const handleUploadProforma = async (workOrderId: number, file: File) => {
+  const handleUploadProforma = async (workOrderId: number | string, file: File) => {
     try {
-      setUploadingId(workOrderId);
+      // Use workOrder.id (integer) for uploading state to match original behavior
+      const workOrderIntId = typeof workOrderId === 'string' 
+        ? workOrders.find(wo => wo.workOrder.customWorkOrderId === workOrderId)?.workOrder?.id 
+        : workOrderId;
+      
+      if (workOrderIntId) {
+        setUploadingId(workOrderIntId);
+      }
+      
       const form = new FormData();
       form.append("file", file);
       if (user?.id) {
@@ -144,7 +165,7 @@ export default function AccountsDashboard() {
                   <Card key={`po-unpaid-${po.id}`}>
                     <CardHeader className="flex flex-row items-center justify-between">
                       <div>
-                        <CardTitle>PO • WO #{po.id}</CardTitle>
+                        <CardTitle>PO • {po.customWorkOrderId || `WO #${po.id}`}</CardTitle>
                         <CardDescription>{new Date(po.createdAt).toLocaleString()}</CardDescription>
                       </div>
                       <Badge variant="destructive">{po.paymentStatus}</Badge>
@@ -188,7 +209,8 @@ export default function AccountsDashboard() {
                             onChange={(e) => {
                               const file = e.target.files?.[0];
                               if (file) {
-                                handleUploadProforma(po.id, file);
+                                // Use customWorkOrderId for API call if available, otherwise use id
+                                handleUploadProforma(po.customWorkOrderId || po.id, file);
                                 e.target.value = "";
                               }
                             }}
@@ -227,7 +249,7 @@ export default function AccountsDashboard() {
                   <Card key={`po-paid-${po.id}`}>
                     <CardHeader className="flex flex-row items-center justify-between">
                       <div>
-                        <CardTitle>PO • WO #{po.id}</CardTitle>
+                        <CardTitle>PO • {po.customWorkOrderId || `WO #${po.id}`}</CardTitle>
                         <CardDescription>{new Date(po.createdAt).toLocaleString()}</CardDescription>
                       </div>
                       <Badge variant="outline" className="text-emerald-600 border-emerald-200 bg-emerald-50">

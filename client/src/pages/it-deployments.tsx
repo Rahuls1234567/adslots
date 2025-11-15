@@ -179,7 +179,7 @@ export default function ITDeploymentsPage() {
       <Card key={`${item.releaseOrder.id}-${item.id}`}>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="text-lg">RO #{item.releaseOrder.id} • WO #{item.releaseOrder.workOrderId}</CardTitle>
+            <CardTitle className="text-lg">{item.releaseOrder.customRoNumber || `RO #${item.releaseOrder.id}`} • {item.releaseOrder.workOrder?.customWorkOrderId || `WO #${item.releaseOrder.workOrderId}`}</CardTitle>
             <CardDescription>
               {item.client?.name || item.workOrder?.contactName || `Client #${item.workOrder?.clientId}`}
             </CardDescription>
@@ -216,8 +216,8 @@ export default function ITDeploymentsPage() {
                 <p className="font-semibold">Deployment Information</p>
                 <div className="mt-1 space-y-1 text-xs">
                   <p>Deployed on: {new Date(deployment.deployedAt).toLocaleString()}</p>
-                  {deployment.slotId && (
-                    <p>Slot ID: {deployment.slotId}</p>
+                  {deployment.customSlotId && (
+                    <p>Slot ID: {deployment.customSlotId}</p>
                   )}
                   <p>Status: {deployment.status}</p>
                 </div>
@@ -275,7 +275,7 @@ export default function ITDeploymentsPage() {
                 {showActions && item.deploymentStatus === "deployed" && (
                   <Button
                     variant="outline"
-                    onClick={() => navigate(`/release-orders/${item.releaseOrder.id}`)}
+                    onClick={() => navigate(`/release-orders/${item.releaseOrder.customRoNumber || item.releaseOrder.id}`)}
                     size="sm"
                   >
                     View Details
@@ -422,7 +422,7 @@ export default function ITDeploymentsPage() {
                     </div>
                     <div>
                       <p className="text-muted-foreground">Work Order</p>
-                      <p className="font-medium">WO #{selectedItem.releaseOrder.workOrderId}</p>
+                      <p className="font-medium">{selectedItem.releaseOrder.workOrder?.customWorkOrderId || `WO #${selectedItem.releaseOrder.workOrderId}`}</p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Client</p>

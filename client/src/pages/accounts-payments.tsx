@@ -91,9 +91,9 @@ export default function AccountsPaymentsPage() {
         return wo.poApproved === true && wo.status !== "rejected";
       })
       .map(({ workOrder: wo, items }) => {
-        const woInvoices = invoices.filter((inv) => inv.workOrderId === wo.id);
+        const woInvoices = invoices.filter((inv) => inv.workOrderId === wo.id || inv.customWorkOrderId === wo.customWorkOrderId);
         const proformaInvoice = woInvoices.find((inv) => inv.invoiceType === "proforma");
-        const releaseOrder = releaseOrders.find((ro) => ro.workOrderId === wo.id);
+        const releaseOrder = releaseOrders.find((ro) => ro.workOrderId === wo.id || ro.customWorkOrderId === wo.customWorkOrderId);
         
         const totalAmount = Number(wo.totalAmount ?? 0);
         const paidAmount = woInvoices
@@ -221,13 +221,14 @@ export default function AccountsPaymentsPage() {
 
   // Payment by slot (from work order items)
   const paymentsBySlot = useMemo(() => {
-    const slotMap: Record<number, { slotId: number; mediaType: string; total: number; paid: number; pending: number; count: number }> = {};
+    const slotMap: Record<string, { slotId: string; mediaType: string; total: number; paid: number; pending: number; count: number }> = {};
     paymentData.forEach((payment) => {
       payment.items.forEach((item: any) => {
-        if (item.slotId) {
-          if (!slotMap[item.slotId]) {
-            slotMap[item.slotId] = {
-              slotId: item.slotId,
+        const slotId = item.customSlotId || item.slot?.slotId || (item.slotId ? String(item.slotId) : null);
+        if (slotId) {
+          if (!slotMap[slotId]) {
+            slotMap[slotId] = {
+              slotId: slotId,
               mediaType: item.slot?.mediaType || "unknown",
               total: 0,
               paid: 0,
@@ -236,12 +237,12 @@ export default function AccountsPaymentsPage() {
             };
           }
           const itemAmount = Number(item.subtotal || item.unitPrice || 0);
-          slotMap[item.slotId].total += itemAmount;
+          slotMap[slotId].total += itemAmount;
           // Distribute payment proportionally
           const paymentRatio = payment.totalAmount > 0 ? payment.paidAmount / payment.totalAmount : 0;
-          slotMap[item.slotId].paid += itemAmount * paymentRatio;
-          slotMap[item.slotId].pending += itemAmount * (1 - paymentRatio);
-          slotMap[item.slotId].count += 1;
+          slotMap[slotId].paid += itemAmount * paymentRatio;
+          slotMap[slotId].pending += itemAmount * (1 - paymentRatio);
+          slotMap[slotId].count += 1;
         }
       });
     });

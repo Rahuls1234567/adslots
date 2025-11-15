@@ -15,11 +15,13 @@ export default function ReleaseOrderDetailPage() {
   const { toast } = useToast();
   const [loc] = useLocation();
   const idStr = useMemo(() => loc.split("/").pop() || "", [loc]);
-  const releaseOrderId = Number(idStr);
+  // Check if it's a custom release order ID (starts with RO) or an integer ID
+  const isCustomId = idStr.startsWith('RO');
+  const releaseOrderId = isCustomId ? idStr : Number(idStr);
 
   const { data, isLoading, refetch } = useQuery<{ releaseOrder: any; items: any[]; workOrder?: any; client?: any; createdBy?: any }>({
     queryKey: [`/api/release-orders/${releaseOrderId}`],
-    enabled: Number.isFinite(releaseOrderId),
+    enabled: isCustomId ? !!idStr : Number.isFinite(releaseOrderId as number),
   });
 
   const [approving, setApproving] = useState(false);
@@ -47,7 +49,7 @@ export default function ReleaseOrderDetailPage() {
   const humanize = (s?: string) => (s || "").replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
 
   const advanceReleaseOrder = async (successMessage: string, failureMessage: string) => {
-    if (!Number.isFinite(releaseOrderId)) return;
+    if (!releaseOrderId) return;
     setApproving(true);
     try {
       await fetch(`/api/release-orders/${releaseOrderId}/approve`, {
@@ -65,7 +67,7 @@ export default function ReleaseOrderDetailPage() {
   };
 
   const returnReleaseOrder = async () => {
-    if (!Number.isFinite(releaseOrderId) || !returnReason.trim()) return;
+    if (!releaseOrderId || !returnReason.trim()) return;
     setReturning(true);
     try {
       await fetch(`/api/release-orders/${releaseOrderId}/return-to-client`, {
@@ -86,7 +88,7 @@ export default function ReleaseOrderDetailPage() {
   };
 
   const uploadAccountsInvoice = async (file: File) => {
-    if (!Number.isFinite(releaseOrderId)) return;
+    if (!releaseOrderId) return;
     
     // Validate file type (PDF only)
     if (file.type !== "application/pdf") {
@@ -152,9 +154,9 @@ export default function ReleaseOrderDetailPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">{ro ? `Release Order #${ro.id}` : 'Release Order'}</h1>
+          <h1 className="text-2xl font-bold">{ro ? (ro.customRoNumber || `Release Order #${ro.id}`) : 'Release Order'}</h1>
           {ro && (
-            <p className="text-muted-foreground">WO #{ro.workOrderId} • {new Date(ro.issuedAt).toLocaleString()}</p>
+            <p className="text-muted-foreground">{wo?.customWorkOrderId || "Unknown Work Order"} • {new Date(ro.issuedAt).toLocaleString()}</p>
           )}
         </div>
         {ro && (
@@ -242,8 +244,8 @@ export default function ReleaseOrderDetailPage() {
                 ? (it.slot.mediaType === 'website'
                     ? `Website • ${PAGE_LABELS[it.slot.pageType] ?? humanize(it.slot.pageType)}`
                     : humanize(it.slot.mediaType))
-                : `Slot #${it.slotId}`;
-              const place = it.slot ? humanize(String(it.slot.position)) : (it.slotId ? `Slot ${it.slotId}` : "—");
+                : `Slot ${it.customSlotId || it.slot?.slotId || (it.slotId ? `#${it.slotId}` : 'Unknown')}`;
+              const place = it.slot ? humanize(String(it.slot.position)) : (it.customSlotId || it.slot?.slotId || (it.slotId ? `Slot ${it.slotId}` : "—"));
               const name = it.slot?.dimensions || "—";
               return (
                 <div key={it.id} className="flex items-center justify-between gap-3 border rounded-md p-3 text-sm">
@@ -281,28 +283,38 @@ export default function ReleaseOrderDetailPage() {
                   )}
                 </div>
               )}
-              {(user?.role === 'manager' || user?.role === 'admin') && ro?.status === 'pending_manager_review' && (
-                <div className="flex justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => {
-                      setReturnDialogOpen(true);
-                      setReturnReason(ro?.rejectionReason ?? "");
-                    }}
-                    disabled={returning}
-                  >
-                    Send back to Client
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => advanceReleaseOrder('Release Order sent to VP', 'Could not send Release Order to VP')}
-                    disabled={approving}
-                  >
-                    {approving ? 'Approving…' : 'Approve and Send to VP'}
-                  </Button>
-                </div>
-              )}
+              {/* Manager buttons: Show when status is pending_manager_review OR when status is pending_banner_upload and all banners are uploaded */}
+              {(user?.role === 'manager' || user?.role === 'admin') && (() => {
+                const slotItems = items.filter((it: any) => !it.addonType);
+                const allBannersUploaded = slotItems.length > 0 && slotItems.every((it: any) => it.bannerUrl);
+                const shouldShowButtons = ro?.status === 'pending_manager_review' || 
+                  (ro?.status === 'pending_banner_upload' && allBannersUploaded);
+                
+                if (!shouldShowButtons) return null;
+                
+                return (
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => {
+                        setReturnDialogOpen(true);
+                        setReturnReason(ro?.rejectionReason ?? "");
+                      }}
+                      disabled={returning}
+                    >
+                      Send back to Client
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => advanceReleaseOrder('Release Order sent to VP', 'Could not send Release Order to VP')}
+                      disabled={approving}
+                    >
+                      {approving ? 'Approving…' : 'Approve and Send to VP'}
+                    </Button>
+                  </div>
+                );
+              })()}
 
               {(user?.role === 'vp' || user?.role === 'admin') && ro?.status === 'pending_vp_review' && (
                 <div className="flex justify-end">
@@ -431,7 +443,7 @@ export default function ReleaseOrderDetailPage() {
           <DialogHeader>
             <DialogTitle>Upload Tax Invoice</DialogTitle>
             <DialogDescription>
-              Upload the tax invoice for Release Order #{ro?.id}
+              Upload the tax invoice for Release Order {ro?.customRoNumber || `#${ro?.id}`}
             </DialogDescription>
           </DialogHeader>
           {ro && (
@@ -439,11 +451,11 @@ export default function ReleaseOrderDetailPage() {
               <div className="space-y-2">
                 <div>
                   <span className="text-muted-foreground">Release Order:</span>{" "}
-                  <span className="font-medium">RO #{ro.id}</span>
+                  <span className="font-medium">{ro.customRoNumber || `RO #${ro.id}`}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Work Order:</span>{" "}
-                  <span className="font-medium">WO #{ro.workOrderId}</span>
+                  <span className="font-medium">{ro.workOrder?.customWorkOrderId || wo?.customWorkOrderId || "Unknown Work Order"}</span>
                 </div>
               </div>
 
@@ -510,5 +522,3 @@ export default function ReleaseOrderDetailPage() {
     </div>
   );
 }
-
-

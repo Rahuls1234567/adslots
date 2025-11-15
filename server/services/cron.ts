@@ -80,7 +80,11 @@ class CronService {
       twoDaysFromNow.setDate(today.getDate() + 2);
 
       const expiringBookings = await db
-        .select()
+        .select({
+          id: bookings.id,
+          status: bookings.status,
+          endDate: bookings.endDate,
+        })
         .from(bookings)
         .where(
           and(
@@ -111,7 +115,11 @@ class CronService {
       const today = new Date().toISOString().split('T')[0];
 
       const expiredBookings = await db
-        .select()
+        .select({
+          id: bookings.id,
+          status: bookings.status,
+          endDate: bookings.endDate,
+        })
         .from(bookings)
         .where(
           and(
@@ -151,7 +159,10 @@ class CronService {
   private async sendPaymentReminders() {
     try {
       const pendingPaymentBookings = await db
-        .select()
+        .select({
+          id: bookings.id,
+          status: bookings.status,
+        })
         .from(bookings)
         .where(eq(bookings.status, "pending_payment"));
 

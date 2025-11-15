@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -223,7 +224,7 @@ export default function ManagerDashboard() {
                   name="pageType"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Page Type</FormLabel>
+                      <FormLabel>Position</FormLabel>
                       <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <FormControl>
                           <SelectTrigger data-testid="select-page-type">
@@ -249,9 +250,9 @@ export default function ManagerDashboard() {
                   name="position"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Position</FormLabel>
+                      <FormLabel>Comment</FormLabel>
                       <FormControl>
-                        <Input placeholder="e.g., header, sidebar, footer" {...field} data-testid="input-position" />
+                        <Textarea placeholder="Add comments or notes about this slot position..." {...field} data-testid="input-position" rows={3} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -368,12 +369,12 @@ export default function ManagerDashboard() {
             <Card
               key={workOrder.id}
               className="hover-elevate cursor-pointer"
-              onClick={() => navigate(`/work-orders/${workOrder.id}`)}
+              onClick={() => navigate(`/work-orders/${workOrder.customWorkOrderId || workOrder.id}`)}
             >
               <CardContent className="flex items-center justify-between gap-4 pt-6">
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium">WO #{workOrder.id}</span>
+                        <span className="font-medium">{workOrder.customWorkOrderId || `WO #${workOrder.id}`}</span>
                         <Badge variant="secondary">Draft</Badge>
                       </div>
                       <div className="text-sm text-muted-foreground mt-1">
@@ -453,7 +454,7 @@ export default function ManagerDashboard() {
                     <SelectItem key={s.id} value={String(s.id)}>
                       {`${s.mediaType === "website" ? "Website" : humanize(s.mediaType)}${
                         s.mediaType === "website" ? ` • ${humanize(s.pageType)}` : ""
-                      } • ${humanize(s.position)}`} • {s.dimensions}
+                      } • ${humanize(s.position)}`} • {s.dimensions} {s.slotId ? `(${s.slotId})` : `(#${s.id})`}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -516,15 +517,19 @@ export default function ManagerDashboard() {
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={async () => {
               if (!blockForm.slotId) { toast({ title: "Slot ID required", variant: "destructive" }); return; }
+              const selectedSlot = filteredSlots.find(s => s.id === blockForm.slotId);
+              const slotDisplayId = selectedSlot?.slotId || `#${blockForm.slotId}`;
               try {
                 await fetch(`/api/slots/${blockForm.slotId}/unblock`, { method: "POST" }).then(r => r.ok ? r.json() : Promise.reject(r));
-                toast({ title: "Unblocked", description: `Slot #${blockForm.slotId} is now available` });
+                toast({ title: "Unblocked", description: `Slot ${slotDisplayId} is now available` });
               } catch {
                 toast({ title: "Failed", description: "Could not unblock slot", variant: "destructive" });
               }
             }}>Unblock</Button>
             <Button onClick={async () => {
               if (!blockForm.slotId) { toast({ title: "Slot ID required", variant: "destructive" }); return; }
+              const selectedSlot = filteredSlots.find(s => s.id === blockForm.slotId);
+              const slotDisplayId = selectedSlot?.slotId || `#${blockForm.slotId}`;
               try {
                 await fetch(`/api/slots/${blockForm.slotId}/block`, {
                   method: "POST",
@@ -538,7 +543,7 @@ export default function ManagerDashboard() {
                   }
                   return r.json();
                 });
-                toast({ title: "Blocked", description: `Slot #${blockForm.slotId} blocked` });
+                toast({ title: "Blocked", description: `Slot ${slotDisplayId} blocked` });
               } catch {
                 toast({ title: "Failed", description: "Cannot block this slot because it overlaps with a client work order.", variant: "destructive" });
               }

@@ -40,7 +40,9 @@ export default function WorkOrderDetailPage() {
   const { user } = useAuth();
   const [loc] = useLocation();
   const idStr = useMemo(() => loc.split("/").pop() || "", [loc]);
-  const workOrderId = Number(idStr);
+  // Check if it's a custom work order ID (starts with WO) or an integer ID
+  const isCustomId = idStr.startsWith('WO');
+  const workOrderId = isCustomId ? idStr : Number(idStr);
   const [poUploadedUrl, setPoUploadedUrl] = useState<string | null>(null);
   const [showPoDialog, setShowPoDialog] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -97,7 +99,7 @@ export default function WorkOrderDetailPage() {
 
   const { data, isLoading, refetch } = useQuery<{ workOrder: WorkOrder; items: any[]; releaseOrderId?: number | null; releaseOrderStatus?: string | null }>({
     queryKey: [`/api/work-orders/${workOrderId}`],
-    enabled: Number.isFinite(workOrderId),
+    enabled: isCustomId ? !!idStr : Number.isFinite(workOrderId as number),
   });
 
   const {
@@ -106,7 +108,7 @@ export default function WorkOrderDetailPage() {
     refetch: refetchInvoices,
   } = useQuery<any[]>({
     queryKey: [`/api/invoices/work-order/${workOrderId}`],
-    enabled: Number.isFinite(workOrderId),
+    enabled: isCustomId ? !!idStr : Number.isFinite(workOrderId as number),
   });
 
   const items = data?.items || [];
@@ -390,7 +392,7 @@ export default function WorkOrderDetailPage() {
         <div>
           <h1 className="text-2xl font-bold">{wo ? `${wo.businessSchoolName || "Client"}_Work Order` : "Work Order"}</h1>
           {wo && (
-            <p className="text-muted-foreground">WO #{wo.id} • {new Date(wo.createdAt).toLocaleString()}</p>
+            <p className="text-muted-foreground">{wo.customWorkOrderId || `WO #${wo.id}`} • {new Date(wo.createdAt).toLocaleString()}</p>
           )}
         </div>
         {wo && (
@@ -450,7 +452,7 @@ export default function WorkOrderDetailPage() {
                   ? (it.slot.mediaType === 'website'
                       ? `Website • ${PAGE_LABELS[it.slot.pageType] ?? humanize(it.slot.pageType)}`
                       : humanize(it.slot.mediaType))
-                  : `Slot #${it.slotId}`;
+                  : `Slot ${it.customSlotId || it.slot?.slotId || (it.slotId ? `#${it.slotId}` : 'Unknown')}`;
                 const place = it.slot ? humanize(String(it.slot.position)) : "—";
                 const name = it.slot?.dimensions || "—";
                 return (
@@ -539,7 +541,7 @@ export default function WorkOrderDetailPage() {
                         ? (it.slot.mediaType === 'website'
                             ? `Website • ${PAGE_LABELS[it.slot.pageType] ?? humanize(it.slot.pageType)} • ${humanize(it.slot.position)}`
                             : `${humanize(it.slot.mediaType)} • ${humanize(it.slot.position)}`)
-                        : `Slot #${it.slotId}`);
+                        : `Slot ${it.customSlotId || it.slot?.slotId || (it.slotId ? `#${it.slotId}` : 'Unknown')}`);
                   const currentPrice = itemPrices[it.id] !== undefined 
                     ? itemPrices[it.id] 
                     : Number(it.unitPrice || 0).toString();
@@ -588,15 +590,23 @@ export default function WorkOrderDetailPage() {
                           variant="secondary" 
                           onClick={async () => {
                             try {
-                              await fetch(`/api/work-orders/${workOrderId}/approve-po`, {
+                              const response = await fetch(`/api/work-orders/${workOrderId}/approve-po`, {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify({ actorId: user?.id }),
-                              }).then(r => r.ok ? r.json() : Promise.reject(r));
+                              });
+                              
+                              if (!response.ok) {
+                                const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
+                                throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+                              }
+                              
+                              await response.json();
                               await refetch();
                               toast({ title: "PO approved", description: "Accounts notified to upload the proforma invoice." });
-                            } catch {
-                              toast({ title: "Failed", description: "Could not approve PO", variant: "destructive" });
+                            } catch (error: any) {
+                              const errorMessage = error?.message || "Could not approve PO";
+                              toast({ title: "Failed", description: errorMessage, variant: "destructive" });
                             }
                           }}
                         >
@@ -985,7 +995,7 @@ export default function WorkOrderDetailPage() {
               return (
                 <div key={it.id} className="flex items-center justify-between gap-3 border rounded-md p-3">
                   <div className="text-sm">
-                    {it.slot ? `${it.slot.mediaType} • ${it.slot.pageType} • ${it.slot.position}` : `Slot #${it.slotId}`}
+                    {it.slot ? `${it.slot.mediaType} • ${it.slot.pageType} • ${it.slot.position}` : `Slot ${it.customSlotId || it.slot?.slotId || (it.slotId ? `#${it.slotId}` : 'Unknown')}`}
                   </div>
                   <div className="flex items-center gap-2">
                     {hasBanner ? (

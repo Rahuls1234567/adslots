@@ -214,7 +214,7 @@ export default function ITDashboard() {
                       <div>
                         <CardTitle className="text-lg">Release Order #{item.releaseOrder.id}</CardTitle>
                         <CardDescription>
-                          WO #{item.releaseOrder.workOrderId} • {item.client?.name || item.workOrder?.contactName || `Client #${item.workOrder?.clientId}`}
+                          {item.releaseOrder.workOrder?.customWorkOrderId || `WO #${item.releaseOrder.workOrderId}`} • {item.client?.name || item.workOrder?.contactName || `Client #${item.workOrder?.clientId}`}
                         </CardDescription>
                       </div>
                       <Badge variant="default">Accepted</Badge>
@@ -309,13 +309,13 @@ export default function ITDashboard() {
                 <Card
                   key={entry.releaseOrder.id}
                   className="cursor-pointer hover:shadow-md transition"
-                  onClick={() => navigate(`/release-orders/${entry.releaseOrder.id}`)}
+                  onClick={() => navigate(`/release-orders/${entry.releaseOrder.customRoNumber || entry.releaseOrder.id}`)}
                 >
                   <CardHeader className="flex flex-row items-center justify-between">
                     <div>
                       <CardTitle className="text-lg">Release Order #{entry.releaseOrder.id}</CardTitle>
                       <CardDescription>
-                        WO #{entry.releaseOrder.workOrderId} • {formatCurrency(entry.workOrder?.totalAmount)} • {entry.items.filter((it: any) => !it.addonType).length} item(s)
+                        {entry.releaseOrder.workOrder?.customWorkOrderId || `WO #${entry.releaseOrder.workOrderId}`} • {formatCurrency(entry.workOrder?.totalAmount)} • {entry.items.filter((it: any) => !it.addonType).length} item(s)
                       </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
@@ -359,7 +359,7 @@ export default function ITDashboard() {
                   </div>
                   <div>
                     <p className="text-muted-foreground">Work Order</p>
-                    <p className="font-medium">WO #{selectedItem.releaseOrder.workOrderId}</p>
+                    <p className="font-medium">{selectedItem.releaseOrder.workOrder?.customWorkOrderId || `WO #${selectedItem.releaseOrder.workOrderId}`}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Client</p>

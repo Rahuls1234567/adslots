@@ -83,10 +83,10 @@ function WorkOrderCard({ workOrder, items }: { workOrder: any; items: any[] }) {
   const canUploadBanners = (workOrder.status === 'client_accepted' || workOrder.status === 'paid') && hasProformaInvoice;
 
   return (
-    <Card className="hover:shadow-sm transition cursor-pointer" onClick={() => navigate(`/work-orders/${workOrder.id}`)}>
+    <Card className="hover:shadow-sm transition cursor-pointer" onClick={() => navigate(`/work-orders/${workOrder.customWorkOrderId || workOrder.id}`)}>
       <CardHeader className="flex flex-row items-center justify-between">
         <div>
-          <CardTitle>Work Order #{workOrder.id}</CardTitle>
+          <CardTitle>{workOrder.customWorkOrderId || `Work Order #${workOrder.id}`}</CardTitle>
           <CardDescription>
             {new Date(workOrder.createdAt).toLocaleString()} • {items.length} item{items.length !== 1 ? "s" : ""}
           </CardDescription>
@@ -109,7 +109,7 @@ function WorkOrderCard({ workOrder, items }: { workOrder: any; items: any[] }) {
               </div>
               <Button size="sm" onClick={(e) => {
                 e.stopPropagation();
-                navigate(`/work-orders/${workOrder.id}`);
+                navigate(`/work-orders/${workOrder.customWorkOrderId || workOrder.id}`);
               }}>
                 Upload Banners
               </Button>
@@ -126,7 +126,7 @@ function WorkOrderCard({ workOrder, items }: { workOrder: any; items: any[] }) {
               </div>
               <Button size="sm" onClick={(e) => {
                 e.stopPropagation();
-                navigate(`/work-orders/${workOrder.id}`);
+                navigate(`/work-orders/${workOrder.customWorkOrderId || workOrder.id}`);
               }}>
                 Upload Banners
               </Button>

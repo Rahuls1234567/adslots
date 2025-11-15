@@ -197,12 +197,12 @@ export default function AccountsReportsPage() {
     const unpaidROs = releaseOrders.filter((ro) => ro.paymentStatus !== "completed");
 
     const paidAmount = paidROs.reduce((sum, ro) => {
-      const wo = workOrders.find((w) => w.workOrder?.id === ro.workOrderId);
+      const wo = workOrders.find((w) => w.workOrder?.id === ro.workOrderId || w.workOrder?.customWorkOrderId === ro.customWorkOrderId);
       return sum + Number(wo?.workOrder?.totalAmount ?? 0);
     }, 0);
 
     const unpaidAmount = unpaidROs.reduce((sum, ro) => {
-      const wo = workOrders.find((w) => w.workOrder?.id === ro.workOrderId);
+      const wo = workOrders.find((w) => w.workOrder?.id === ro.workOrderId || w.workOrder?.customWorkOrderId === ro.customWorkOrderId);
       return sum + Number(wo?.workOrder?.totalAmount ?? 0);
     }, 0);
 

@@ -121,11 +121,11 @@ export default function AcceptedReleaseOrdersPage() {
                 <Card
                   key={releaseOrder.id}
                   className="hover:shadow-sm transition cursor-pointer"
-                  onClick={() => navigate(`/release-orders/${releaseOrder.id}`)}
+                  onClick={() => navigate(`/release-orders/${releaseOrder.customRoNumber || releaseOrder.id}`)}
                 >
                   <CardHeader className="flex flex-row items-center justify-between">
                     <div>
-                      <CardTitle>RO #{releaseOrder.id} • WO #{releaseOrder.workOrderId}</CardTitle>
+                      <CardTitle>{releaseOrder.customRoNumber || `RO #${releaseOrder.id}`} • {releaseOrder.workOrder?.customWorkOrderId || `WO #${releaseOrder.workOrderId}`}</CardTitle>
                       <CardDescription>
                         {new Date(releaseOrder.issuedAt).toLocaleString()} • {items.length} item{items.length === 1 ? "" : "s"}
                       </CardDescription>
@@ -205,7 +205,7 @@ export default function AcceptedReleaseOrdersPage() {
                 </div>
                 <div>
                   <span className="text-muted-foreground">Work Order:</span>{" "}
-                  <span className="font-medium">WO #{selectedReleaseOrder.workOrderId}</span>
+                  <span className="font-medium">{selectedReleaseOrder.workOrder?.customWorkOrderId || `WO #${selectedReleaseOrder.workOrderId}`}</span>
                 </div>
                 {selectedReleaseOrder.accountsInvoiceUrl && (
                   <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
