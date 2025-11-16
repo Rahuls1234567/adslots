@@ -11,6 +11,10 @@ import { useAuth } from "@/lib/auth-context";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { CalendarIcon, Plus, Trash2, Edit2, Save, X } from "lucide-react";
+import { format } from "date-fns";
 
 type WorkOrder = {
   id: number;
@@ -33,6 +37,7 @@ type WorkOrder = {
   negotiationRequested?: boolean | null;
   negotiationReason?: string | null;
   negotiationRequestedAt?: string | null;
+  customWorkOrderId?: string | null;
 };
 
 export default function WorkOrderDetailPage() {
@@ -58,6 +63,9 @@ export default function WorkOrderDetailPage() {
   const [pendingBannerPreviews, setPendingBannerPreviews] = useState<Record<number, string>>({});
   const [pendingBannerFiles, setPendingBannerFiles] = useState<Record<number, File>>({});
   const [viewBannerDialog, setViewBannerDialog] = useState<{ open: boolean; url: string | null }>({ open: false, url: null });
+  const [installments, setInstallments] = useState<Array<{ amount: number; dueDate: string; id?: number }>>([]);
+  const [editingInstallmentIndex, setEditingInstallmentIndex] = useState<number | null>(null);
+  const [showInstallmentDialog, setShowInstallmentDialog] = useState(false);
 
   const uploadPo = async (file: File) => {
     // Validate file size (10 MB limit)
@@ -111,6 +119,12 @@ export default function WorkOrderDetailPage() {
     enabled: isCustomId ? !!idStr : Number.isFinite(workOrderId as number),
   });
 
+  // Fetch installments when payment mode is installment
+  const { data: installmentsData, refetch: refetchInstallments } = useQuery<Array<{ id: number; amount: string; dueDate: string; status: string; bookingId: number }>>({
+    queryKey: [`/api/installments/work-order/${isCustomId ? idStr : workOrderId}`],
+    enabled: (isCustomId ? !!idStr : Number.isFinite(workOrderId as number)) && paymentMode === "installment",
+  });
+
   const items = data?.items || [];
   const wo = data?.workOrder as (WorkOrder | undefined);
   const releaseOrderId = (data as any)?.releaseOrderId || null;
@@ -148,6 +162,28 @@ export default function WorkOrderDetailPage() {
       setItemPrices(initialPrices);
     }
   }, [data?.items]);
+
+  // Initialize installments from server data
+  useEffect(() => {
+    if (installmentsData && installmentsData.length > 0) {
+      const formatted = installmentsData.map(inst => ({
+        id: inst.id,
+        amount: Number(inst.amount),
+        dueDate: inst.dueDate,
+      }));
+      setInstallments(formatted);
+    } else if (paymentMode === "installment" && installmentsData && installmentsData.length === 0) {
+      // Reset installments if payment mode is installment but no installments exist yet
+      setInstallments([]);
+    }
+  }, [installmentsData, paymentMode]);
+
+  // Reset installments when payment mode changes
+  useEffect(() => {
+    if (paymentMode !== "installment") {
+      setInstallments([]);
+    }
+  }, [paymentMode]);
 
   const updateItem = useMutation({
     mutationFn: async ({ itemId, unitPrice }: { itemId: number; unitPrice: number }) => {
@@ -270,6 +306,30 @@ export default function WorkOrderDetailPage() {
     },
   });
 
+  // Save installment schedule
+  const saveInstallments = useMutation({
+    mutationFn: async (schedule: Array<{ amount: number; dueDate: string }>) => {
+      const res = await fetch(`/api/work-orders/${workOrderId}/installments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schedule, generatedById: user?.id }),
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: "Failed to save installments" }));
+        throw new Error(errorData.error || "Failed to save installments");
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      await refetchInstallments();
+      setShowInstallmentDialog(false);
+      toast({ title: "Installments saved", description: "Installment schedule has been saved successfully." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to save installments", description: err?.message || "Please try again", variant: "destructive" });
+    },
+  });
+
   const rejectWo = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/work-orders/${workOrderId}`, {
@@ -356,6 +416,57 @@ export default function WorkOrderDetailPage() {
     const gstAmt = sum * (isNaN(gst) ? 0 : gst) / 100;
     return sum + gstAmt;
   }, [items, itemPrices, gstPercent, wo]);
+
+  // Calculate total installment amount
+  const totalInstallmentAmount = useMemo(() => {
+    return installments.reduce((sum, inst) => sum + (inst.amount || 0), 0);
+  }, [installments]);
+
+  // Helper functions for installment management
+  const addInstallment = () => {
+    setInstallments([...installments, { amount: 0, dueDate: new Date().toISOString().split('T')[0] }]);
+  };
+
+  const updateInstallment = (index: number, updates: Partial<{ amount: number; dueDate: string }>) => {
+    const updated = [...installments];
+    updated[index] = { ...updated[index], ...updates };
+    setInstallments(updated);
+  };
+
+  const removeInstallment = (index: number) => {
+    setInstallments(installments.filter((_, i) => i !== index));
+  };
+
+  const handleSaveInstallments = () => {
+    if (installments.length === 0) {
+      toast({ title: "No installments", description: "Please add at least one installment.", variant: "destructive" });
+      return;
+    }
+
+    const invalidAmount = installments.some(inst => !inst.amount || inst.amount <= 0);
+    if (invalidAmount) {
+      toast({ title: "Invalid amount", description: "All installment amounts must be greater than 0.", variant: "destructive" });
+      return;
+    }
+
+    const invalidDate = installments.some(inst => !inst.dueDate);
+    if (invalidDate) {
+      toast({ title: "Invalid date", description: "All installments must have a due date.", variant: "destructive" });
+      return;
+    }
+
+    const difference = Math.abs(totalInstallmentAmount - calcLocalTotal);
+    if (difference > 1) { // Allow 1 rupee difference for rounding
+      toast({ 
+        title: "Amount mismatch", 
+        description: `Total installments (₹${totalInstallmentAmount.toLocaleString()}) must equal work order total (₹${calcLocalTotal.toLocaleString()}).`, 
+        variant: "destructive" 
+      });
+      return;
+    }
+
+    saveInstallments.mutate(installments.map(inst => ({ amount: inst.amount, dueDate: inst.dueDate })));
+  };
 
   // Determine if buttons should be disabled
   // Disable when: quoted and no negotiation, or client_accepted/paid/active
@@ -570,6 +681,52 @@ export default function WorkOrderDetailPage() {
                   <div className="text-sm text-muted-foreground">Total (incl. GST)</div>
                   <div className="font-semibold">₹{calcLocalTotal.toLocaleString()}</div>
                 </div>
+                {paymentMode === "installment" && (
+                  <div className="space-y-2 pt-2 border-t">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-medium">Installment Schedule</div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowInstallmentDialog(true)}
+                      >
+                        <Plus className="h-4 w-4 mr-1" />
+                        {installments.length > 0 ? "Edit" : "Set"} Schedule
+                      </Button>
+                    </div>
+                    {installments.length > 0 && (
+                      <div className="space-y-2 rounded-md border p-3 bg-muted/40 text-sm">
+                        {installments.map((inst, idx) => (
+                          <div key={idx} className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">Installment {idx + 1}:</span>
+                              <span>₹{inst.amount.toLocaleString()}</span>
+                              <span className="text-muted-foreground">•</span>
+                              <span>{inst.dueDate ? format(new Date(inst.dueDate), "MMM dd, yyyy") : "—"}</span>
+                            </div>
+                          </div>
+                        ))}
+                        <div className="flex items-center justify-between pt-2 border-t">
+                          <span className="font-medium">Total:</span>
+                          <span className={`font-semibold ${Math.abs(totalInstallmentAmount - calcLocalTotal) > 1 ? "text-red-600" : "text-green-600"}`}>
+                            ₹{totalInstallmentAmount.toLocaleString()}
+                          </span>
+                        </div>
+                        {Math.abs(totalInstallmentAmount - calcLocalTotal) > 1 && (
+                          <div className="text-xs text-red-600 mt-1">
+                            ⚠️ Total doesn't match work order total (₹{calcLocalTotal.toLocaleString()})
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {installments.length === 0 && (
+                      <div className="text-sm text-muted-foreground italic">
+                        Click "Set Schedule" to define installment breakups with dates and amounts.
+                      </div>
+                    )}
+                  </div>
+                )}
                 {wo?.poUrl && (
                   <div className="space-y-2">
                     {wo.poApproved ? (
@@ -1188,6 +1345,136 @@ export default function WorkOrderDetailPage() {
       )}
 
       {/* Release Order card intentionally omitted here; use Release Orders tab instead */}
+
+      {/* Installment Schedule Dialog */}
+      <Dialog open={showInstallmentDialog} onOpenChange={setShowInstallmentDialog}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Set Installment Schedule</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="text-sm text-muted-foreground">
+              Define installment breakups with dates and amounts. Total must equal ₹{calcLocalTotal.toLocaleString()}.
+            </div>
+            <div className="space-y-3">
+              {installments.map((inst, idx) => {
+                const dateValue = inst.dueDate ? new Date(inst.dueDate) : undefined;
+                return (
+                  <div key={idx} className="flex items-start gap-3 p-3 border rounded-lg">
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium min-w-[100px]">Installment {idx + 1}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Amount (₹)</label>
+                          <Input
+                            type="number"
+                            value={inst.amount || ""}
+                            onChange={(e) => {
+                              const value = parseFloat(e.target.value) || 0;
+                              updateInstallment(idx, { amount: value });
+                            }}
+                            placeholder="0.00"
+                            min="0"
+                            step="0.01"
+                            className="h-9"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs text-muted-foreground">Due Date</label>
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                className="w-full h-9 justify-start text-left font-normal"
+                              >
+                                <CalendarIcon className="mr-2 h-4 w-4" />
+                                {dateValue ? format(dateValue, "MMM dd, yyyy") : "Select date"}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-auto p-0" align="start">
+                              <Calendar
+                                mode="single"
+                                selected={dateValue}
+                                onSelect={(date) => {
+                                  if (date) {
+                                    updateInstallment(idx, { dueDate: date.toISOString().split('T')[0] });
+                                  }
+                                }}
+                                initialFocus
+                              />
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeInstallment(idx)}
+                      className="mt-6"
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={addInstallment}
+              className="w-full"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Installment
+            </Button>
+            {installments.length > 0 && (
+              <div className="space-y-2 p-3 bg-muted/40 rounded-lg border-t">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Total Installments:</span>
+                  <span className={`text-sm font-semibold ${Math.abs(totalInstallmentAmount - calcLocalTotal) > 1 ? "text-red-600" : "text-green-600"}`}>
+                    ₹{totalInstallmentAmount.toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Work Order Total:</span>
+                  <span className="text-sm font-semibold">₹{calcLocalTotal.toLocaleString()}</span>
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <span className="text-sm font-medium">Difference:</span>
+                  <span className={`text-sm font-semibold ${Math.abs(totalInstallmentAmount - calcLocalTotal) > 1 ? "text-red-600" : "text-green-600"}`}>
+                    ₹{Math.abs(totalInstallmentAmount - calcLocalTotal).toLocaleString()}
+                  </span>
+                </div>
+                {Math.abs(totalInstallmentAmount - calcLocalTotal) > 1 && (
+                  <div className="text-xs text-red-600 mt-1">
+                    ⚠️ Total installments must equal work order total
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowInstallmentDialog(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSaveInstallments}
+                disabled={saveInstallments.isPending || installments.length === 0 || Math.abs(totalInstallmentAmount - calcLocalTotal) > 1}
+              >
+                {saveInstallments.isPending ? "Saving..." : "Save Schedule"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

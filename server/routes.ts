@@ -5,9 +5,9 @@ import path from "path";
 import fs from "fs";
 import PDFDocument from "pdfkit";
 import { storage } from "./storage";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { banners, versionHistory, workOrders, workOrderItems, releaseOrders, releaseOrderItems, invoices, activityLogs, deployments, bookings, payments, analytics, proposals } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { insertUserSchema, insertOtpCodeSchema, insertSlotSchema, insertBookingSchema, insertBannerSchema, insertApprovalSchema, signupSchema, users, type Slot } from "@shared/schema";
 import { notificationService } from "./services/notification";
 import { analyticsService } from "./services/analytics";
@@ -174,7 +174,87 @@ async function getReleaseOrderByIdParam(idParam: string) {
   }
 }
 
+// Ensure WhatsApp enum value exists in database
+async function ensureWhatsAppEnumValue() {
+  try {
+    console.log('[ensureWhatsAppEnumValue] Checking if whatsapp enum value exists...');
+    
+    // Use pool.query directly - works for both Neon and regular PostgreSQL
+    const pgPool = pool as any;
+    
+    // Check if 'whatsapp' value exists in the enum
+    const checkQuery = `
+      SELECT 1 FROM pg_enum 
+      WHERE enumlabel = 'whatsapp' 
+      AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'media_type')
+    `;
+    
+    let checkResult: any;
+    if (pgPool.query && typeof pgPool.query === 'function') {
+      // Regular PostgreSQL pool
+      checkResult = await pgPool.query(checkQuery);
+    } else if (pgPool.execute && typeof pgPool.execute === 'function') {
+      // Neon pool
+      checkResult = await pgPool.execute(checkQuery);
+    } else {
+      // Try drizzle execute as fallback
+      checkResult = await db.execute(sql`
+        SELECT 1 FROM pg_enum 
+        WHERE enumlabel = 'whatsapp' 
+        AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'media_type')
+      `);
+    }
+    
+    // If it doesn't exist, add it
+    const rows = checkResult.rows || (Array.isArray(checkResult) ? checkResult : []);
+    if (rows.length === 0) {
+      console.log('[ensureWhatsAppEnumValue] whatsapp enum value not found, adding it...');
+      try {
+        // ALTER TYPE must use raw SQL - try pool.query first
+        const alterQuery = `ALTER TYPE media_type ADD VALUE IF NOT EXISTS 'whatsapp'`;
+        if (pgPool.query && typeof pgPool.query === 'function') {
+          await pgPool.query(alterQuery);
+        } else if (pgPool.execute && typeof pgPool.execute === 'function') {
+          await pgPool.execute(alterQuery);
+        } else {
+          // Last resort: try to get a client from the pool
+          const client = await pgPool.connect();
+          try {
+            await client.query(alterQuery);
+          } finally {
+            client.release();
+          }
+        }
+        console.log('✓ Added "whatsapp" to media_type enum');
+      } catch (alterError: any) {
+        // If the error is that the value already exists (race condition), that's fine
+        if (alterError.message && (alterError.message.includes('already exists') || alterError.message.includes('duplicate') || alterError.message.includes('already present'))) {
+          console.log('✓ "whatsapp" already exists in media_type enum (race condition)');
+        } else {
+          console.error('[ensureWhatsAppEnumValue] Error adding enum value:', alterError.message);
+          throw alterError;
+        }
+      }
+    } else {
+      console.log('✓ "whatsapp" already exists in media_type enum');
+    }
+  } catch (error: any) {
+    // If the error is that the value already exists, that's fine
+    if (error.message && (error.message.includes('already exists') || error.message.includes('duplicate') || error.message.includes('already present'))) {
+      console.log('✓ "whatsapp" already exists in media_type enum');
+    } else {
+      console.error('⚠ Could not ensure whatsapp enum value:', error.message);
+      console.error('Full error:', error);
+      // Re-throw so caller knows it failed
+      throw error;
+    }
+  }
+}
+
 export function registerRoutes(app: Express) {
+  // Ensure WhatsApp enum value exists on startup
+  ensureWhatsAppEnumValue().catch(console.error);
+  
   // Auth routes
   app.post("/api/auth/signup", async (req, res) => {
     try {
@@ -465,9 +545,33 @@ export function registerRoutes(app: Express) {
   app.post("/api/slots", async (req, res) => {
     try {
       const validatedData = insertSlotSchema.parse(req.body);
+      
+      // If mediaType is whatsapp, ensure enum value exists (fallback)
+      if (validatedData.mediaType === 'whatsapp') {
+        try {
+          await ensureWhatsAppEnumValue();
+        } catch (enumError) {
+          // Continue anyway, the error will be caught below if enum is missing
+          console.warn('[POST /api/slots] Could not ensure whatsapp enum:', enumError);
+        }
+      }
+      
       const slot = await storage.createSlot(validatedData);
       res.json(slot);
     } catch (error: any) {
+      // If error is about whatsapp enum, try to add it and retry once
+      if (error.message && error.message.includes('whatsapp') && error.message.includes('enum')) {
+        try {
+          console.log('[POST /api/slots] Retrying after ensuring whatsapp enum...');
+          await ensureWhatsAppEnumValue();
+          // Retry the operation
+          const validatedData = insertSlotSchema.parse(req.body);
+          const slot = await storage.createSlot(validatedData);
+          return res.json(slot);
+        } catch (retryError: any) {
+          return res.status(400).json({ error: retryError.message || error.message });
+        }
+      }
       res.status(400).json({ error: error.message });
     }
   });
@@ -1630,14 +1734,25 @@ export function registerRoutes(app: Express) {
             message: `Your request (Work Order ${wo.customWorkOrderId || `#${wo.id}`}) has been submitted and awaits manager quote.`,
           });
 
-          // Notify managers: new request
+          // Notify managers: new request with email
           const managers = await db.select().from(users).where(eq(users.role, "manager"));
+          const reviewUrl = `${process.env.APP_URL || 'http://localhost:5173'}/work-orders/${wo.customWorkOrderId || wo.id}`;
           for (const m of managers) {
             await notificationService.createNotification({
               userId: m.id,
               type: "approval_required",
               message: `New Work Order ${wo.customWorkOrderId || `#${wo.id}`} from ${client.name} requires a quote.`,
             });
+            // Send email to manager
+            if (m.email) {
+              await emailService.sendWorkOrderToManagerEmail(
+                m.email,
+                m.name || "Manager",
+                wo.customWorkOrderId || `#${wo.id}`,
+                client.name,
+                reviewUrl
+              );
+            }
           }
         }
       } catch {}
@@ -2436,12 +2551,24 @@ export function registerRoutes(app: Express) {
 
       if (nextStatus === "pending_vp_review") {
         const vps = await db.select().from(users).where(eq(users.role, "vp"));
+        const approvalUrl = `${process.env.APP_URL || 'http://localhost:5173'}/`;
         for (const vp of vps) {
           await notificationService.createNotification({
             userId: vp.id,
             type: "ro_approved",
             message: `Release Order ${ro.customRoNumber || `#${id}`} for ${client?.name ?? (wo?.customWorkOrderId ? `WO ${wo.customWorkOrderId}` : "Unknown")} is ready for your approval.`,
           });
+          // Send email to VP
+          if (vp.email) {
+            await emailService.sendVPApprovalEmail(
+              vp.email,
+              vp.name || "VP",
+              ro.customRoNumber || `#${id}`,
+              wo?.customWorkOrderId || wo?.id || 0,
+              client?.name || "Unknown",
+              approvalUrl
+            );
+          }
         }
       } else if (nextStatus === "pending_pv_review") {
         const pvs = await db.select().from(users).where(eq(users.role, "pv_sir"));
@@ -2465,14 +2592,26 @@ export function registerRoutes(app: Express) {
           }
         }
       } else if (nextStatus === "ready_for_it") {
-        // Notify IT team for deployment
+        // Notify IT team for deployment with email
         const itUsers = await db.select().from(users).where(eq(users.role, "it"));
+        const deploymentUrl = `${process.env.APP_URL || 'http://localhost:5173'}/it-dashboard`;
         for (const itUser of itUsers) {
           await notificationService.createNotification({
             userId: itUser.id,
             type: "ro_ready_for_deployment",
             message: `Release Order ${ro.customRoNumber || `#${id}`} for ${client?.name ?? (wo?.customWorkOrderId ? `WO ${wo.customWorkOrderId}` : "Unknown")} is ready for IT deployment.`,
           });
+          // Send email to IT team
+          if (itUser.email) {
+            await emailService.sendITDeploymentEmail(
+              itUser.email,
+              itUser.name || "IT Team",
+              ro.customRoNumber || `#${id}`,
+              wo?.customWorkOrderId || wo?.id || 0,
+              client?.name || "Unknown",
+              deploymentUrl
+            );
+          }
         }
         // Also notify other stakeholders
         const notifyRoles = ["manager", "vp", "pv_sir"] as const;

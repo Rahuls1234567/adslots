@@ -316,6 +316,199 @@ class EmailService {
       text: `Release Order #${releaseOrderId} for Work Order #${workOrderId} awaits your approval. Review here: ${approvalUrl}`,
     });
   }
+
+  // Work Order created → Manager Review
+  async sendWorkOrderToManagerEmail(
+    managerEmail: string,
+    managerName: string,
+    workOrderId: string | number,
+    clientName: string,
+    reviewUrl: string
+  ) {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; }
+            .button { display: inline-block; background: #10B981; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+            .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>📋 New Work Order Requires Review</h1>
+            </div>
+            <div class="content">
+              <p>Dear ${managerName},</p>
+              <p>A new Work Order <strong>${workOrderId}</strong> has been submitted by <strong>${clientName}</strong> and requires your review and quote.</p>
+              <p>Please review the work order details and provide a quote as soon as possible.</p>
+              <a href="${reviewUrl}" class="button">Review Work Order</a>
+            </div>
+            <div class="footer">
+              <p>© ${new Date().getFullYear()} TIME. All rights reserved.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    return this.sendEmail({
+      to: managerEmail,
+      subject: `📋 New Work Order ${workOrderId} requires review`,
+      html,
+      text: `New Work Order ${workOrderId} from ${clientName} requires your review. Review here: ${reviewUrl}`,
+    });
+  }
+
+  // Manager → VP Approval
+  async sendVPApprovalEmail(
+    vpEmail: string,
+    vpName: string,
+    releaseOrderId: string | number,
+    workOrderId: string | number,
+    clientName: string,
+    approvalUrl: string
+  ) {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; }
+            .button { display: inline-block; background: #8B5CF6; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+            .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>✅ Release Order Pending VP Approval</h1>
+            </div>
+            <div class="content">
+              <p>Dear ${vpName},</p>
+              <p>Release Order <strong>${releaseOrderId}</strong> (Work Order ${workOrderId}) for <strong>${clientName}</strong> has been approved by Manager and is awaiting your approval.</p>
+              <p>Please review the release order and complete the approval process.</p>
+              <a href="${approvalUrl}" class="button">Review & Approve</a>
+            </div>
+            <div class="footer">
+              <p>© ${new Date().getFullYear()} TIME. All rights reserved.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    return this.sendEmail({
+      to: vpEmail,
+      subject: `✅ Release Order ${releaseOrderId} awaiting VP approval`,
+      html,
+      text: `Release Order ${releaseOrderId} for Work Order ${workOrderId} (${clientName}) awaits your approval. Review here: ${approvalUrl}`,
+    });
+  }
+
+  // PV Sir → IT Deployment
+  async sendITDeploymentEmail(
+    itEmail: string,
+    itName: string,
+    releaseOrderId: string | number,
+    workOrderId: string | number,
+    clientName: string,
+    deploymentUrl: string
+  ) {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; }
+            .button { display: inline-block; background: #F59E0B; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+            .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>🚀 Release Order Ready for IT Deployment</h1>
+            </div>
+            <div class="content">
+              <p>Dear ${itName},</p>
+              <p>Release Order <strong>${releaseOrderId}</strong> (Work Order ${workOrderId}) for <strong>${clientName}</strong> has been approved by PV Sir and is ready for deployment.</p>
+              <p>Please proceed with banner deployment to the designated slots.</p>
+              <a href="${deploymentUrl}" class="button">Deploy Banner</a>
+            </div>
+            <div class="footer">
+              <p>© ${new Date().getFullYear()} TIME. All rights reserved.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    return this.sendEmail({
+      to: itEmail,
+      subject: `🚀 Release Order ${releaseOrderId} ready for IT deployment`,
+      html,
+      text: `Release Order ${releaseOrderId} for Work Order ${workOrderId} (${clientName}) is ready for deployment. Deploy here: ${deploymentUrl}`,
+    });
+  }
+
+  // Campaign Live Notification (IT Deployment → Live Banner)
+  async sendCampaignLiveEmail(
+    clientEmail: string,
+    clientName: string,
+    bookingId: number,
+    campaignUrl?: string
+  ) {
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #10B981 0%, #059669 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+            .content { background: #ffffff; padding: 30px; border: 1px solid #e5e5e5; border-top: none; }
+            .button { display: inline-block; background: #10B981; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }
+            .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>🎉 Your Campaign is Now Live!</h1>
+            </div>
+            <div class="content">
+              <p>Dear ${clientName},</p>
+              <p>Great news! Your banner has been successfully deployed and your campaign <strong>#${bookingId}</strong> is now live!</p>
+              <p>Your advertisement is now visible to all visitors on the designated slots.</p>
+              ${campaignUrl ? `<a href="${campaignUrl}" class="button">View Campaign</a>` : ''}
+            </div>
+            <div class="footer">
+              <p>© ${new Date().getFullYear()} TIME. All rights reserved.</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    return this.sendEmail({
+      to: clientEmail,
+      subject: `🎉 Campaign #${bookingId} is now live!`,
+      html,
+      text: `Your campaign #${bookingId} is now live! Your banner has been successfully deployed.`,
+    });
+  }
 }
 
 export const emailService = new EmailService();

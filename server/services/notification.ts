@@ -206,6 +206,11 @@ class NotificationService {
         message: `🚀 Your campaign #${bookingId} is now live!`,
       });
 
+      // Send email and WhatsApp to client
+      if (client.email) {
+        const campaignUrl = `${process.env.APP_URL || 'http://localhost:5173'}/bookings`;
+        await emailService.sendCampaignLiveEmail(client.email, client.name, bookingId, campaignUrl);
+      }
       await whatsappService.sendCampaignLive(client.phone, client.name, bookingId);
     } catch (error) {
       console.error("Error in notifyCampaignLive:", error);
