@@ -3,8 +3,8 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Enums
-export const userRoleEnum = pgEnum("user_role", ["client", "manager", "vp", "pv_sir", "accounts", "it", "admin"]);
-export const mediaTypeEnum = pgEnum("media_type", ["website", "mobile", "email", "magazine"]);
+export const userRoleEnum = pgEnum("user_role", ["client", "manager", "vp", "pv_sir", "accounts", "it", "admin", "material"]);
+export const mediaTypeEnum = pgEnum("media_type", ["website", "mobile", "email", "magazine", "whatsapp"]);
 export const pageTypeEnum = pgEnum("page_type", ["main", "course", "webinar", "student_login", "student_home", "other"]);
 export const slotStatusEnum = pgEnum("slot_status", ["available", "booked", "pending", "expired"]);
 export const bookingStatusEnum = pgEnum("booking_status", [
@@ -40,6 +40,7 @@ export const releaseOrderStatusEnum = pgEnum("release_order_status", [
   "pending_pv_review",
   "accepted",
   "ready_for_it",
+  "ready_for_material",
   "deployed",
 ]);
 export const invoiceTypeEnum = pgEnum("invoice_type", ["proforma", "tax_invoice"]);
@@ -80,7 +81,7 @@ export const adminCreateSchema = z.object({
   name: z.string().min(2, "Name must be at least 2 characters"),
   email: z.string().email("Invalid email address"),
   phone: z.string().min(10, "Phone number must be at least 10 digits"),
-  role: z.enum(["client", "manager", "vp", "pv_sir", "accounts", "it", "admin"]),
+  role: z.enum(["client", "manager", "vp", "pv_sir", "accounts", "it", "admin", "material"]),
   businessSchoolName: z.string().optional(),
   schoolAddress: z.string().optional(),
   gstNumber: z.string().optional(),
@@ -394,3 +395,17 @@ export const deployments = pgTable("deployments", {
 export const insertDeploymentSchema = createInsertSchema(deployments).omit({ id: true, deployedAt: true, createdAt: true });
 export type InsertDeployment = z.infer<typeof insertDeploymentSchema>;
 export type Deployment = typeof deployments.$inferSelect;
+
+// RO Details table
+export const roDetails = pgTable("ro_details", {
+  id: serial("id").primaryKey(),
+  mediaType: text("media_type").notNull(), // e.g., "Website", "Mobile APP", "Email", "Whatsapp", "Magazine"
+  position: text("position").notNull(), // e.g., "Student Homepage", "Chatpages", "Front Cover Inside"
+  status: integer("status").default(0).notNull(),
+  propertyPrefix: text("property_prefix").notNull(), // e.g., "WEB", "APP", "EML", "WAP", "MAG"
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertRoDetailsSchema = createInsertSchema(roDetails).omit({ id: true, createdAt: true });
+export type InsertRoDetails = z.infer<typeof insertRoDetailsSchema>;
+export type RoDetails = typeof roDetails.$inferSelect;

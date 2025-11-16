@@ -94,191 +94,245 @@ export default function Analytics() {
   };
 
   return (
-    <div className="space-y-8">
-      {user?.role === "admin" && (
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                ₹{allBookings.reduce((sum, b) => sum + parseFloat(b.totalAmount.toString()), 0).toLocaleString()}
-              </div>
-              <p className="text-xs text-muted-foreground">All time</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Slots</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{allSlots.length}</div>
-              <p className="text-xs text-muted-foreground">
-                {allSlots.filter(s => s.status === "available").length} available
+    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/20">
+      {/* Header Section */}
+      <div className="border-b bg-background/80 backdrop-blur-sm shadow-sm">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-6 md:p-8">
+          <div className="flex items-center justify-between">
+            <div className="space-y-2">
+              <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <BarChartIcon className="w-6 h-6 text-primary" />
+                </div>
+                Analytics Dashboard
+              </h1>
+              <p className="text-muted-foreground text-base">
+                Track your campaign performance and insights
               </p>
-            </CardContent>
-          </Card>
+            </div>
+            {analytics && (
+              <Button onClick={exportToCSV} variant="outline" className="gap-2 h-11">
+                <Download className="w-4 h-4" />
+                Export CSV
+              </Button>
+            )}
+          </div>
+
+          {/* Admin Stats */}
+          {user?.role === "admin" && (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card className="border-2 shadow-sm">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
+                  <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/20 flex items-center justify-center">
+                    <TrendingUp className="h-5 w-5 text-green-600" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-green-600">
+                    ₹{allBookings.reduce((sum, b) => sum + parseFloat(b.totalAmount.toString()), 0).toLocaleString()}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">All time revenue</p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 shadow-sm">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Slots</CardTitle>
+                  <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/20 flex items-center justify-center">
+                    <Target className="h-5 w-5 text-blue-600" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-blue-600">{allSlots.length}</div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {allSlots.filter(s => s.status === "available").length} available
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
-      )}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <BarChartIcon className="w-8 h-8" />
-            Analytics Dashboard
-          </h1>
-          <p className="text-muted-foreground">Track your campaign performance</p>
-        </div>
-        {analytics && (
-          <Button onClick={exportToCSV} variant="outline">
-            <Download className="mr-2 h-4 w-4" />
-            Export CSV
-          </Button>
-        )}
       </div>
 
-      {/* Booking Selector */}
-      {user?.role === "client" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Select Campaign</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {bookingsLoading ? (
-              <Skeleton className="h-10 w-full" />
-            ) : bookings.length === 0 ? (
-              <p className="text-muted-foreground">No bookings found</p>
-            ) : (
-              <Select
-                value={selectedBooking?.toString()}
-                onValueChange={(value) => setSelectedBooking(parseInt(value))}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a campaign" />
-                </SelectTrigger>
-                <SelectContent>
-                  {bookings.map((booking) => (
-                    <SelectItem key={booking.id} value={booking.id.toString()}>
-                      Booking #{booking.id} - {booking.startDate} to {booking.endDate} ({booking.status})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      {/* Main Content */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-6 md:p-8">
 
-      {/* Summary Cards */}
-      {analyticsLoading ? (
-        <div className="grid gap-6 md:grid-cols-3">
-          {[...Array(3)].map((_, i) => (
-            <Skeleton key={i} className="h-32" />
-          ))}
+          {/* Booking Selector */}
+          {user?.role === "client" && (
+            <Card className="shadow-lg border-2">
+              <CardHeader>
+                <CardTitle className="text-lg font-bold flex items-center gap-2">
+                  <Target className="w-5 h-5 text-primary" />
+                  Select Campaign
+                </CardTitle>
+                <CardDescription>Choose a campaign to view its analytics</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {bookingsLoading ? (
+                  <Skeleton className="h-11 w-full rounded-lg" />
+                ) : bookings.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Target className="h-12 w-12 text-muted-foreground mx-auto mb-3 opacity-50" />
+                    <p className="text-muted-foreground">No bookings found</p>
+                  </div>
+                ) : (
+                  <Select
+                    value={selectedBooking?.toString()}
+                    onValueChange={(value) => setSelectedBooking(parseInt(value))}
+                  >
+                    <SelectTrigger className="w-full h-11">
+                      <SelectValue placeholder="Select a campaign" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bookings.map((booking) => (
+                        <SelectItem key={booking.id} value={booking.id.toString()}>
+                          Booking #{booking.id} - {booking.startDate} to {booking.endDate} ({booking.status})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Summary Cards */}
+          {analyticsLoading ? (
+            <div className="grid gap-4 md:grid-cols-3">
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} className="h-36 rounded-lg" />
+              ))}
+            </div>
+          ) : analytics ? (
+            <div className="grid gap-4 md:grid-cols-3">
+              <Card className="border-2 shadow-sm hover:shadow-md transition-shadow">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Impressions</CardTitle>
+                  <div className="w-12 h-12 rounded-full bg-purple-100 dark:bg-purple-900/20 flex items-center justify-center">
+                    <Eye className="h-6 w-6 text-purple-600" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-purple-600">{analytics.summary.totalImpressions.toLocaleString()}</div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Times your ad was displayed
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 shadow-sm hover:shadow-md transition-shadow">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Total Clicks</CardTitle>
+                  <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/20 flex items-center justify-center">
+                    <MousePointer className="h-6 w-6 text-green-600" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-green-600">{analytics.summary.totalClicks.toLocaleString()}</div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Times users clicked your ad
+                  </p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-2 shadow-sm hover:shadow-md transition-shadow">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium">Click-Through Rate</CardTitle>
+                  <div className="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/20 flex items-center justify-center">
+                    <Target className="h-6 w-6 text-blue-600" />
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-3xl font-bold text-blue-600">{analytics.summary.ctr}%</div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Percentage of clicks vs impressions
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          ) : null}
+
+          {/* Charts */}
+          {analyticsLoading ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Skeleton className="h-96 rounded-lg" />
+              <Skeleton className="h-96 rounded-lg" />
+            </div>
+          ) : analytics && chartData.length > 0 ? (
+            <div className="grid gap-4 md:grid-cols-2">
+              <Card className="shadow-lg border-2">
+                <CardHeader>
+                  <CardTitle className="text-lg font-bold">Impressions & Clicks Over Time</CardTitle>
+                  <CardDescription>Daily performance metrics and trends</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="date" stroke="#6b7280" />
+                      <YAxis stroke="#6b7280" />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: 'hsl(var(--background))', 
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: '8px'
+                        }} 
+                      />
+                      <Legend />
+                      <Line type="monotone" dataKey="impressions" stroke="#7334AE" strokeWidth={2} dot={{ r: 4 }} />
+                      <Line type="monotone" dataKey="clicks" stroke="#34C759" strokeWidth={2} dot={{ r: 4 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+
+              <Card className="shadow-lg border-2">
+                <CardHeader>
+                  <CardTitle className="text-lg font-bold">Daily Performance</CardTitle>
+                  <CardDescription>Impressions and clicks comparison by day</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="date" stroke="#6b7280" />
+                      <YAxis stroke="#6b7280" />
+                      <Tooltip 
+                        contentStyle={{ 
+                          backgroundColor: 'hsl(var(--background))', 
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: '8px'
+                        }} 
+                      />
+                      <Legend />
+                      <Bar dataKey="impressions" fill="#7334AE" radius={[8, 8, 0, 0]} />
+                      <Bar dataKey="clicks" fill="#34C759" radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </div>
+          ) : selectedBooking ? (
+            <Card className="border-2 border-dashed shadow-sm">
+              <CardContent className="py-16 text-center">
+                <div className="flex flex-col items-center gap-4">
+                  <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+                    <TrendingUp className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-foreground mb-1">No analytics data available yet</h3>
+                    <p className="text-sm text-muted-foreground max-w-md">
+                      Data will appear once your campaign starts receiving impressions and user interactions.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
-      ) : analytics ? (
-        <div className="grid gap-6 md:grid-cols-3">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Impressions</CardTitle>
-              <Eye className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{analytics.summary.totalImpressions.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Times your ad was displayed
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Clicks</CardTitle>
-              <MousePointer className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{analytics.summary.totalClicks.toLocaleString()}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Times users clicked your ad
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Click-Through Rate</CardTitle>
-              <Target className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{analytics.summary.ctr}%</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                Percentage of clicks vs impressions
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
-
-      {/* Charts */}
-      {analyticsLoading ? (
-        <div className="grid gap-6 md:grid-cols-2">
-          <Skeleton className="h-80" />
-          <Skeleton className="h-80" />
-        </div>
-      ) : analytics && chartData.length > 0 ? (
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Impressions & Clicks Over Time</CardTitle>
-              <CardDescription>Daily performance metrics</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="impressions" stroke="#7334AE" strokeWidth={2} />
-                  <Line type="monotone" dataKey="clicks" stroke="#34C759" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Daily Performance</CardTitle>
-              <CardDescription>Impressions and clicks comparison</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="impressions" fill="#7334AE" />
-                  <Bar dataKey="clicks" fill="#34C759" />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </div>
-      ) : selectedBooking ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <TrendingUp className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <p className="text-muted-foreground">No analytics data available yet</p>
-            <p className="text-sm text-muted-foreground mt-2">
-              Data will appear once your campaign starts receiving impressions
-            </p>
-          </CardContent>
-        </Card>
-      ) : null}
+      </div>
     </div>
   );
 }

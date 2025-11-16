@@ -18,7 +18,7 @@ interface SlotGridProps {
   onSlotSelect?: (slot: Slot) => void;
   onSlotInfo?: (slot: Slot) => void;
   selectable?: boolean;
-  mediaType?: "all" | "website" | "mobile" | "email" | "magazine";
+  mediaType?: "all" | "website" | "mobile" | "email" | "magazine" | "whatsapp";
 }
 
 const getGridColumns = (mediaType: string) => {
@@ -27,6 +27,8 @@ const getGridColumns = (mediaType: string) => {
       // Two cards per row for better readability and modern look
       return "grid-cols-1 md:grid-cols-2";
     case "mobile":
+      return "grid-cols-1 md:grid-cols-2";
+    case "whatsapp":
       return "grid-cols-1 md:grid-cols-2";
     case "magazine":
       return "grid-cols-1 md:grid-cols-2";

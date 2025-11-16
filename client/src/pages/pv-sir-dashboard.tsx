@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -38,12 +38,24 @@ export default function PVSirDashboard() {
     queryKey: ["/api/release-orders", { status: "pending_pv_review" }],
   });
 
+  // Fetch all approved release orders (ready_for_it, ready_for_material, and accepted)
+  const { data: readyForIt = [] } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_it" }],
+  });
+  const { data: readyForMaterial = [] } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_material" }],
+  });
   const { data: accepted = [] } = useQuery<ReleaseOrderEntry[]>({
     queryKey: ["/api/release-orders", { status: "accepted" }],
   });
+  
+  // Combine all approved release orders
+  const allApproved = useMemo(() => {
+    return [...readyForIt, ...readyForMaterial, ...accepted];
+  }, [readyForIt, readyForMaterial, accepted]);
 
   const approveMutation = useMutation({
-    mutationFn: async (releaseOrderId: number) => {
+    mutationFn: async ({ releaseOrderId, hasMagazine }: { releaseOrderId: number; hasMagazine: boolean }) => {
       const res = await fetch(`/api/release-orders/${releaseOrderId}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -52,10 +64,14 @@ export default function PVSirDashboard() {
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "pending_pv_review" }] });
       queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "accepted" }] });
-      toast({ title: "Release Order accepted", description: "Accounts and IT have been notified." });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "ready_for_it" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "ready_for_material" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders"] });
+      const teamName = variables.hasMagazine ? "Material" : "IT";
+      toast({ title: "Release Order accepted", description: `Accounts and ${teamName} have been notified.` });
     },
     onError: (error: any) => {
       toast({
@@ -180,8 +196,15 @@ export default function PVSirDashboard() {
       >
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="text-lg">Release Order #{entry.releaseOrder.id}</CardTitle>
-            <CardDescription>WO #{entry.releaseOrder.workOrderId} • {formatCurrency(entry.workOrder?.totalAmount)}</CardDescription>
+            <CardTitle className="text-lg">Release Order {entry.releaseOrder.customRoNumber || `#${entry.releaseOrder.id}`}</CardTitle>
+            <CardDescription>
+              <div className="text-sm font-medium text-foreground">
+                Work Order: {entry.releaseOrder.workOrder?.customWorkOrderId || `WO #${entry.releaseOrder.workOrderId}`}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {formatCurrency(entry.workOrder?.totalAmount)}
+              </div>
+            </CardDescription>
             <div className="text-xs text-muted-foreground mt-1">
               Client: {entry.client?.name || entry.workOrder?.contactName || `Client #${entry.workOrder?.clientId}`}
             </div>
@@ -209,7 +232,10 @@ export default function PVSirDashboard() {
                 size="sm"
                 onClick={(e) => {
                   e.stopPropagation();
-                  approveMutation.mutate(entry.releaseOrder.id);
+                  const hasMagazine = entry.items.some((item: any) => 
+                  !item.addonType && item.slot?.mediaType === "magazine"
+                );
+                approveMutation.mutate({ releaseOrderId: entry.releaseOrder.id, hasMagazine });
                 }}
                 disabled={approveMutation.isPending}
               >
@@ -223,10 +249,10 @@ export default function PVSirDashboard() {
   };
 
   const pendingCount = pending.length;
-  const acceptedCount = accepted.length;
-  const ongoingCount = accepted.filter((entry) => entry.releaseOrder.paymentStatus !== "completed").length;
-  const totalRevenue = accepted.reduce((sum, entry) => sum + Number(entry.workOrder?.totalAmount ?? 0), 0);
-  const pendingDues = accepted
+  const acceptedCount = allApproved.length;
+  const ongoingCount = allApproved.filter((entry) => entry.releaseOrder.paymentStatus !== "completed").length;
+  const totalRevenue = allApproved.reduce((sum, entry) => sum + Number(entry.workOrder?.totalAmount ?? 0), 0);
+  const pendingDues = allApproved
     .filter((entry) => entry.releaseOrder.paymentStatus !== "completed")
     .reduce((sum, entry) => sum + Number(entry.workOrder?.totalAmount ?? 0), 0);
 
@@ -304,7 +330,7 @@ export default function PVSirDashboard() {
         </TabsContent>
 
         <TabsContent value="accepted" className="space-y-4">
-          {renderReleaseOrders(accepted, false)}
+          {renderReleaseOrders(allApproved, false)}
         </TabsContent>
       </Tabs>
 
@@ -334,7 +360,7 @@ export default function PVSirDashboard() {
                         </div>
                         {item.bannerUrl ? (
                           <Button
-                            variant="link"
+                            variant="ghost"
                             className="h-auto p-0"
                             onClick={() => window.open(item.bannerUrl, "_blank", "noopener")}
                           >
@@ -357,7 +383,12 @@ export default function PVSirDashboard() {
                 >
                   Reject
                 </Button>
-                <Button onClick={() => approveMutation.mutate(selectedEntry.releaseOrder.id)} disabled={approveMutation.isPending}>
+                <Button onClick={() => {
+                  const hasMagazine = selectedEntry.items.some((item: any) => 
+                    !item.addonType && item.slot?.mediaType === "magazine"
+                  );
+                  approveMutation.mutate({ releaseOrderId: selectedEntry.releaseOrder.id, hasMagazine });
+                }} disabled={approveMutation.isPending}>
                   {approveMutation.isPending ? "Accepting…" : "Approve & Finalize"}
                 </Button>
               </div>

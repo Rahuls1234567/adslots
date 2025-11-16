@@ -38,13 +38,26 @@ export default function VPDashboard() {
     queryKey: ["/api/release-orders", { status: "pending_vp_review" }],
   });
 
+  // Fetch orders approved by VP (sent to PV Sir)
   const { data: vpAccepted = [] } = useQuery<ReleaseOrderEntry[]>({
     queryKey: ["/api/release-orders", { status: "pending_pv_review" }],
   });
 
+  // Fetch orders fully approved by PV Sir (ready_for_it, ready_for_material, accepted)
+  const { data: readyForIt = [] } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_it" }],
+  });
+  const { data: readyForMaterial = [] } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_material" }],
+  });
   const { data: fullyAccepted = [] } = useQuery<ReleaseOrderEntry[]>({
     queryKey: ["/api/release-orders", { status: "accepted" }],
   });
+  
+  // Combine all fully approved orders (approved by PV Sir)
+  const allFullyApproved = useMemo(() => {
+    return [...readyForIt, ...readyForMaterial, ...fullyAccepted];
+  }, [readyForIt, readyForMaterial, fullyAccepted]);
 
   // Fetch orders rejected by the current VP user from backend
   const { data: rejectedByVP = [], isLoading: loadingRejected } = useQuery<ReleaseOrderEntry[]>({
@@ -66,6 +79,9 @@ export default function VPDashboard() {
       queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "pending_vp_review" }] });
       queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "pending_pv_review" }] });
       queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "accepted" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "ready_for_it" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "ready_for_material" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders"] });
       toast({ title: "Release Order approved", description: "Sent to PV Sir for final approval." });
     },
     onError: (error: any) => {
@@ -208,8 +224,15 @@ export default function VPDashboard() {
       >
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle className="text-lg">Release Order #{entry.releaseOrder.id}</CardTitle>
-            <CardDescription>WO #{entry.releaseOrder.workOrderId} • {formatCurrency(entry.workOrder?.totalAmount)}</CardDescription>
+            <CardTitle className="text-lg">Release Order {entry.releaseOrder.customRoNumber || `#${entry.releaseOrder.id}`}</CardTitle>
+            <CardDescription>
+              <div className="text-sm font-medium text-foreground">
+                Work Order: {entry.releaseOrder.workOrder?.customWorkOrderId || `WO #${entry.releaseOrder.workOrderId}`}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {formatCurrency(entry.workOrder?.totalAmount)}
+              </div>
+            </CardDescription>
           </div>
           <Badge variant="secondary" className="capitalize">{humanize(entry.releaseOrder.status)}</Badge>
         </CardHeader>
@@ -248,7 +271,7 @@ export default function VPDashboard() {
   };
 
   const pendingCount = pending.length;
-  const vpAcceptedCount = vpAccepted.length;
+  const vpAcceptedCount = vpAccepted.length + allFullyApproved.length;
   const rejectedCount = rejectedByVP.length;
 
   return (
@@ -318,9 +341,12 @@ export default function VPDashboard() {
 
         <TabsContent value="accepted" className="space-y-4">
           {renderReleaseOrders(
-            vpAccepted.map((entry) => ({
+            [...vpAccepted, ...allFullyApproved].map((entry) => ({
               ...entry,
-              releaseOrder: { ...entry.releaseOrder, status: "accepted" },
+              releaseOrder: { 
+                ...entry.releaseOrder, 
+                status: entry.releaseOrder.status === "pending_pv_review" ? "pending_pv_review" : entry.releaseOrder.status 
+              },
             })),
             false
           )}

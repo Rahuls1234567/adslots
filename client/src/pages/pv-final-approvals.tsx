@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -63,9 +63,24 @@ function PrimaryDetails({ entry }: { entry: ReleaseOrderEntry }) {
 
 export default function PVFinalApprovalsPage() {
   const [selected, setSelected] = useState<ReleaseOrderEntry | null>(null);
-  const { data: accepted = [], isLoading } = useQuery<ReleaseOrderEntry[]>({
+  
+  // Fetch all approved release orders (ready_for_it, ready_for_material, and accepted)
+  const { data: readyForIt = [], isLoading: loadingReadyForIt } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_it" }],
+  });
+  const { data: readyForMaterial = [], isLoading: loadingReadyForMaterial } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_material" }],
+  });
+  const { data: accepted = [], isLoading: loadingAccepted } = useQuery<ReleaseOrderEntry[]>({
     queryKey: ["/api/release-orders", { status: "accepted" }],
   });
+  
+  // Combine all approved release orders
+  const allApproved = useMemo(() => {
+    return [...readyForIt, ...readyForMaterial, ...accepted];
+  }, [readyForIt, readyForMaterial, accepted]);
+  
+  const isLoading = loadingReadyForIt || loadingReadyForMaterial || loadingAccepted;
 
   return (
     <div className="space-y-6 p-6">
@@ -80,15 +95,15 @@ export default function PVFinalApprovalsPage() {
             <Skeleton key={i} className="h-32 w-full" />
           ))}
         </div>
-      ) : accepted.length === 0 ? (
+      ) : allApproved.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
-            No accepted release orders yet.
+            No approved release orders yet.
           </CardContent>
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {accepted.map((entry) => (
+          {allApproved.map((entry) => (
             <Card
               key={entry.releaseOrder.id}
               className="cursor-pointer hover:shadow-md transition"
@@ -96,8 +111,15 @@ export default function PVFinalApprovalsPage() {
             >
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle className="text-lg">Release Order #{entry.releaseOrder.id}</CardTitle>
-                  <CardDescription>WO #{entry.releaseOrder.workOrderId} • {formatCurrency(entry.workOrder?.totalAmount)}</CardDescription>
+                  <CardTitle className="text-lg">Release Order {entry.releaseOrder.customRoNumber || `#${entry.releaseOrder.id}`}</CardTitle>
+                  <CardDescription>
+                    <div className="text-sm font-medium text-foreground">
+                      Work Order: {entry.releaseOrder.workOrder?.customWorkOrderId || `WO #${entry.releaseOrder.workOrderId}`}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {formatCurrency(entry.workOrder?.totalAmount)}
+                    </div>
+                  </CardDescription>
                 </div>
                 <Badge variant="secondary" className="capitalize">{humanize(entry.releaseOrder.status)}</Badge>
               </CardHeader>
@@ -112,7 +134,7 @@ export default function PVFinalApprovalsPage() {
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Release Order #{selected?.releaseOrder.id}</DialogTitle>
+            <DialogTitle>Release Order {selected?.releaseOrder.customRoNumber || `#${selected?.releaseOrder.id}`}</DialogTitle>
           </DialogHeader>
           {selected ? (
             <div className="space-y-4 text-sm">

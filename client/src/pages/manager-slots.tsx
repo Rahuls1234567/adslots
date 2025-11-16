@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Redirect } from "wouter";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +30,7 @@ const MEDIA_OPTIONS: Array<{ value: "all" | Slot["mediaType"]; label: string }> 
   { value: "mobile", label: "Mobile App" },
   { value: "magazine", label: "Magazine" },
   { value: "email", label: "Email" },
+  { value: "whatsapp", label: "Whatsapp" },
 ];
 
 type DerivedStatus = "available" | "pending" | "booked" | "expired" | "blocked";
@@ -50,18 +51,10 @@ const PAGE_LABELS: Record<string, string> = {
   aimcat_results_analysis: "AIMCAT results and analysis page",
   chat_pages: "Chat pages",
 };
-const PAGE_OPTIONS: Array<{ value: "all" | keyof typeof PAGE_LABELS | "other"; label: string }> = [
-  { value: "all", label: "All pages" },
-  { value: "main", label: PAGE_LABELS.main },
-  { value: "student_home", label: PAGE_LABELS.student_home },
-  { value: "student_login", label: PAGE_LABELS.student_login },
-  { value: "aimcat_results_analysis", label: PAGE_LABELS.aimcat_results_analysis },
-  { value: "chat_pages", label: PAGE_LABELS.chat_pages },
-  { value: "other", label: "Other" },
-];
+// Position filter will be populated dynamically from slots
 
 const createSlotSchema = z.object({
-  mediaType: z.enum(["website", "mobile", "email", "magazine"]),
+  mediaType: z.enum(["website", "mobile", "email", "magazine", "whatsapp"]),
   pageType: z.string().min(1),
   position: z.string().min(1),
   dimensions: z.string().min(1),
@@ -69,14 +62,42 @@ const createSlotSchema = z.object({
   status: z.enum(["available", "pending"]).default("available"),
 });
 
+// Helper function to map database media type to enum value
+const mapMediaTypeToEnum = (dbMediaType: string): "website" | "mobile" | "email" | "magazine" | "whatsapp" => {
+  const mapping: Record<string, "website" | "mobile" | "email" | "magazine" | "whatsapp"> = {
+    "Website": "website",
+    "Mobile APP": "mobile",
+    "Email": "email",
+    "Magazine": "magazine",
+    "Whatsapp": "whatsapp",
+  };
+  return mapping[dbMediaType] || "website";
+};
+
+// Helper function to map enum value to database media type
+const mapEnumToMediaType = (enumValue: string): string => {
+  const mapping: Record<string, string> = {
+    "website": "Website",
+    "mobile": "Mobile APP",
+    "email": "Email",
+    "magazine": "Magazine",
+    "whatsapp": "Whatsapp",
+  };
+  return mapping[enumValue] || enumValue;
+};
+
 type WorkOrderListEntry = {
   workOrder: {
     id: number;
     status: string;
   };
   items: Array<{
-    slotId: number | null;
+    slotId?: number | null;
+    customSlotId?: string | null;
+    slot?: { id: number } | null;
     addonType?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
   }>;
 };
 
@@ -105,8 +126,14 @@ export default function ManagerSlotsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [mediaFilter, setMediaFilter] = useState<(typeof MEDIA_OPTIONS)[number]["value"]>("all");
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_OPTIONS)[number]["value"]>("all");
-  const [pageFilter, setPageFilter] = useState<(typeof PAGE_OPTIONS)[number]["value"]>("all");
+  const [positionFilter, setPositionFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
+
+  // Reset position filter when media type changes
+  const handleMediaFilterChange = (value: string) => {
+    setMediaFilter(value as any);
+    setPositionFilter("all"); // Reset position filter when media type changes
+  };
 
   const { toast } = useToast();
 
@@ -114,13 +141,62 @@ export default function ManagerSlotsPage() {
     resolver: zodResolver(createSlotSchema),
     defaultValues: {
       mediaType: "website",
-      pageType: "main",
+      pageType: "other", // Default page type (hidden from form)
       position: "",
-      dimensions: "",
+      dimensions: "728x90", // Default dimensions
       pricing: 0,
       status: "available",
     },
   });
+
+  // Fetch media types from database
+  const { data: mediaTypesData, isLoading: isLoadingMediaTypes, error: mediaTypesError } = useQuery<string[]>({
+    queryKey: ["/api/media-types"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/media-types");
+      const result = await response.json();
+      return Array.isArray(result) ? result : [];
+    },
+    retry: 1,
+  });
+
+  // Fallback to default media types if API fails or returns empty
+  const allMediaTypes = mediaTypesData && mediaTypesData.length > 0 
+    ? mediaTypesData 
+    : ["Website", "Mobile APP", "Email", "Magazine", "Whatsapp"];
+  
+  // Filter to only include valid media types that match the schema enum
+  const validMediaTypes = ["Website", "Mobile APP", "Email", "Magazine", "Whatsapp"];
+  const mediaTypes = allMediaTypes.filter(mt => validMediaTypes.includes(mt));
+
+  // Get selected media type from form
+  const selectedMediaType = createSlotForm.watch("mediaType") || "website";
+  const dbMediaType = selectedMediaType ? mapEnumToMediaType(selectedMediaType) : null;
+
+  // Fetch positions based on selected media type
+  const { data: positionsData, error: positionsError, isLoading: isLoadingPositions } = useQuery<string[]>({
+    queryKey: ["/api/positions", dbMediaType],
+    queryFn: async () => {
+      if (!dbMediaType) return [];
+      try {
+        const response = await apiRequest("GET", `/api/positions?mediaType=${encodeURIComponent(dbMediaType)}`);
+        const result = await response.json();
+        console.log("Positions fetched for", dbMediaType, ":", result);
+        const positionsArray = Array.isArray(result) ? result : [];
+        console.log("Positions array:", positionsArray, "Length:", positionsArray.length);
+        return positionsArray;
+      } catch (error) {
+        console.error("Error fetching positions:", error);
+        return [];
+      }
+    },
+    enabled: !!dbMediaType && !!selectedMediaType,
+    retry: 1,
+    staleTime: 0, // Always refetch when media type changes
+  });
+
+  // Ensure positions is always an array
+  const positions = Array.isArray(positionsData) ? positionsData : [];
 
   const createSlotMutation = useMutation({
     mutationFn: async (payload: z.infer<typeof createSlotSchema>) => {
@@ -176,7 +252,21 @@ export default function ManagerSlotsPage() {
       });
       const activeWorkOrder = (workOrders || []).find(({ workOrder, items }) => {
         if (!workOrderBusyStatuses.has(workOrder.status)) return false;
-        return items.some((item) => item.slotId === slot.id);
+        // Match by slotId (integer), slot.id from nested object, or customSlotId (string)
+        return items.some((item) => {
+          if (item.slotId === slot.id) return true;
+          if (item.slot?.id === slot.id) return true;
+          if (item.customSlotId && slot.slotId && item.customSlotId === slot.slotId) return true;
+          return false;
+        });
+      });
+      
+      // Get the work order item that matches this slot for date range
+      const matchingWorkOrderItem = activeWorkOrder?.items.find((item) => {
+        if (item.slotId === slot.id) return true;
+        if (item.slot?.id === slot.id) return true;
+        if (item.customSlotId && slot.slotId && item.customSlotId === slot.slotId) return true;
+        return false;
       });
 
       let derivedStatus: DerivedStatus = slot.status as DerivedStatus;
@@ -195,26 +285,62 @@ export default function ManagerSlotsPage() {
         derivedStatus,
         activeBooking,
         activeWorkOrder,
+        matchingWorkOrderItem,
       } as Slot & {
         derivedStatus: DerivedStatus;
         activeBooking?: Booking;
         activeWorkOrder?: WorkOrderListEntry;
+        matchingWorkOrderItem?: { startDate?: string | null; endDate?: string | null };
       };
     });
   }, [slots, bookings, workOrders]);
 
+  // Get selected media type for position filter (convert enum to database format)
+  const filterMediaType = mediaFilter !== "all" ? mapEnumToMediaType(mediaFilter) : null;
+
+  // Fetch positions from database based on selected media type (like in create slot form)
+  const { data: filterPositionsData, error: filterPositionsError, isLoading: isLoadingFilterPositions } = useQuery<string[]>({
+    queryKey: ["/api/positions", filterMediaType],
+    queryFn: async () => {
+      if (!filterMediaType) return [];
+      try {
+        const response = await apiRequest("GET", `/api/positions?mediaType=${encodeURIComponent(filterMediaType)}`);
+        const result = await response.json();
+        const positionsArray = Array.isArray(result) ? result : [];
+        return positionsArray;
+      } catch (error) {
+        console.error("Error fetching positions for filter:", error);
+        return [];
+      }
+    },
+    enabled: !!filterMediaType && mediaFilter !== "all",
+    retry: 1,
+    staleTime: 0,
+  });
+
+  // Position options for filter dropdown
+  const positionOptions = useMemo(() => {
+    if (mediaFilter === "all") {
+      // When "all" is selected, show all unique positions from existing slots
+      const uniquePositions = new Set<string>();
+      (enhancedSlots || []).forEach((slot) => {
+        if (slot.position) {
+          uniquePositions.add(slot.position);
+        }
+      });
+      return Array.from(uniquePositions).sort();
+    } else {
+      // When specific media type is selected, use positions from database API
+      return Array.isArray(filterPositionsData) ? filterPositionsData.sort() : [];
+    }
+  }, [enhancedSlots, mediaFilter, filterPositionsData]);
+
   const filteredSlots = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
-    return (enhancedSlots || []).filter((slot) => {
+    const filtered = (enhancedSlots || []).filter((slot) => {
       if (mediaFilter !== "all" && slot.mediaType !== mediaFilter) return false;
       if (statusFilter !== "all" && slot.derivedStatus !== statusFilter) return false;
-      if (pageFilter !== "all") {
-        if (pageFilter === "other") {
-          if (slot.mediaType === "website" && Object.keys(PAGE_LABELS).includes(slot.pageType)) return false;
-        } else if (slot.pageType !== pageFilter) {
-          return false;
-        }
-      }
+      if (positionFilter !== "all" && slot.position !== positionFilter) return false;
       if (!term) return true;
       const haystack = [
         slot.id,
@@ -228,7 +354,14 @@ export default function ManagerSlotsPage() {
         .map((value) => String(value).toLowerCase());
       return haystack.some((value) => value.includes(term));
     });
-  }, [enhancedSlots, mediaFilter, statusFilter, searchTerm]);
+    
+    // Sort by createdAt (newest first)
+    return filtered.sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA; // Newest first
+    });
+  }, [enhancedSlots, mediaFilter, statusFilter, positionFilter, searchTerm]);
 
   const stats = useMemo(() => {
     const total = enhancedSlots.length;
@@ -267,6 +400,16 @@ export default function ManagerSlotsPage() {
                 onSubmit={createSlotForm.handleSubmit((values) => createSlotMutation.mutate(values))}
                 className="space-y-4"
               >
+                {mediaTypesError && (
+                  <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 text-sm rounded-md">
+                    Using default media types. Database connection may be unavailable.
+                  </div>
+                )}
+                {positionsError && (
+                  <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 text-sm rounded-md">
+                    Could not load positions. You can still enter a position manually.
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField
                     control={createSlotForm.control}
@@ -274,17 +417,28 @@ export default function ManagerSlotsPage() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Media Type</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value}>
+                        <Select 
+                          onValueChange={(value) => {
+                            field.onChange(value);
+                            // Reset position when media type changes
+                            createSlotForm.setValue("position", "");
+                          }} 
+                          value={field.value || undefined}
+                        >
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select media type" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            <SelectItem value="website">Website</SelectItem>
-                            <SelectItem value="mobile">Mobile App</SelectItem>
-                            <SelectItem value="magazine">Magazine</SelectItem>
-                            <SelectItem value="email">Email</SelectItem>
+                            {mediaTypes.map((mediaType) => {
+                              const enumValue = mapMediaTypeToEnum(mediaType);
+                              return (
+                                <SelectItem key={`${mediaType}-${enumValue}`} value={enumValue}>
+                                  {mediaType}
+                                </SelectItem>
+                              );
+                            })}
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -317,22 +471,45 @@ export default function ManagerSlotsPage() {
 
                 <FormField
                   control={createSlotForm.control}
-                  name="pageType"
+                  name="position"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Page Type</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
+                      <FormLabel>Position</FormLabel>
+                      <Select 
+                        key={`position-select-${dbMediaType}-${positions.length}`}
+                        onValueChange={field.onChange} 
+                        value={field.value || ""}
+                        disabled={!selectedMediaType || isLoadingPositions}
+                      >
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder="Select page type" />
+                            <SelectValue placeholder={
+                              isLoadingPositions 
+                                ? "Loading..." 
+                                : !selectedMediaType 
+                                  ? "Select media type first" 
+                                  : positions.length === 0 
+                                    ? "No positions available" 
+                                    : "Select position"
+                            } />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {PAGE_OPTIONS.filter((option) => option.value !== "all").map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
+                          {isLoadingPositions ? (
+                            <SelectItem value="loading" disabled>Loading positions...</SelectItem>
+                          ) : positionsError ? (
+                            <SelectItem value="error" disabled>Error loading positions</SelectItem>
+                          ) : positions && Array.isArray(positions) && positions.length > 0 ? (
+                            positions.map((position, index) => (
+                              <SelectItem key={`${position}-${index}`} value={position}>
+                                {position}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="manual" disabled>
+                              {selectedMediaType ? `No positions found for ${dbMediaType}. Enter manually below.` : "Select media type first"}
                             </SelectItem>
-                          ))}
+                          )}
                         </SelectContent>
                       </Select>
                       <FormMessage />
@@ -343,25 +520,12 @@ export default function ManagerSlotsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <FormField
                     control={createSlotForm.control}
-                    name="position"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Position</FormLabel>
-                        <FormControl>
-                          <Input placeholder="e.g. Header, Sidebar" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={createSlotForm.control}
                     name="dimensions"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Dimensions</FormLabel>
                         <FormControl>
-                          <Input placeholder="e.g. 728x90" {...field} />
+                          <Input placeholder="e.g. 728x90" {...field} value={field.value || "728x90"} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -436,16 +600,20 @@ export default function ManagerSlotsPage() {
               className="w-full lg:max-w-sm"
             />
             <div className="flex flex-wrap gap-3">
-              <Select value={mediaFilter} onValueChange={(value) => setMediaFilter(value as any)}>
+              <Select value={mediaFilter} onValueChange={handleMediaFilterChange}>
                 <SelectTrigger className="w-36">
                   <SelectValue placeholder="Media type" />
                 </SelectTrigger>
                 <SelectContent>
-                  {MEDIA_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="all">All media</SelectItem>
+                  {mediaTypes.map((mediaType) => {
+                    const enumValue = mapMediaTypeToEnum(mediaType);
+                    return (
+                      <SelectItem key={mediaType} value={enumValue}>
+                        {mediaType}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
               <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as any)}>
@@ -461,18 +629,38 @@ export default function ManagerSlotsPage() {
                 </SelectContent>
               </Select>
               <Select
-                value={pageFilter}
-                onValueChange={(value) => setPageFilter(value as any)}
+                value={positionFilter}
+                onValueChange={(value) => setPositionFilter(value)}
+                disabled={mediaFilter === "all" || isLoadingFilterPositions || positionOptions.length === 0}
               >
                 <SelectTrigger className="w-40">
-                  <SelectValue placeholder="Page" />
+                  <SelectValue placeholder={
+                    mediaFilter === "all" 
+                      ? "Select media type first" 
+                      : isLoadingFilterPositions
+                        ? "Loading..."
+                        : positionOptions.length === 0
+                          ? "No positions available"
+                          : "Position"
+                  } />
                 </SelectTrigger>
                 <SelectContent>
-                  {PAGE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
+                  <SelectItem value="all">All positions</SelectItem>
+                  {isLoadingFilterPositions ? (
+                    <SelectItem value="loading" disabled>Loading positions...</SelectItem>
+                  ) : filterPositionsError ? (
+                    <SelectItem value="error" disabled>Error loading positions</SelectItem>
+                  ) : positionOptions.length > 0 ? (
+                    positionOptions.map((position) => (
+                      <SelectItem key={position} value={position}>
+                        {position}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="none" disabled>
+                      {mediaFilter === "all" ? "Select media type first" : "No positions available"}
                     </SelectItem>
-                  ))}
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -527,18 +715,28 @@ export default function ManagerSlotsPage() {
                     </div>
                     {slot.derivedStatus === "booked" && slot.activeBooking && (
                       <div className="flex items-center justify-between text-blue-600">
-                        <span>Booked until</span>
-                        <span className="font-medium">
-                          {new Date(slot.activeBooking.endDate).toLocaleDateString()}
+                        <span>Booked</span>
+                        <span className="font-medium text-xs">
+                          {new Date(slot.activeBooking.startDate).toLocaleDateString()} - {new Date(slot.activeBooking.endDate).toLocaleDateString()}
                         </span>
                       </div>
                     )}
                     {slot.derivedStatus === "booked" && !slot.activeBooking && slot.activeWorkOrder && (
-                      <div className="flex items-center justify-between text-blue-600">
-                        <span>Work Order</span>
-                        <span className="font-medium">
-                          #{slot.activeWorkOrder.workOrder.id} • {slot.activeWorkOrder.workOrder.status.replace(/_/g, " ")}
-                        </span>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between text-blue-600">
+                          <span>Work Order</span>
+                          <span className="font-medium">
+                            #{slot.activeWorkOrder.workOrder.id} • {slot.activeWorkOrder.workOrder.status.replace(/_/g, " ")}
+                          </span>
+                        </div>
+                        {slot.matchingWorkOrderItem && slot.matchingWorkOrderItem.startDate && slot.matchingWorkOrderItem.endDate && (
+                          <div className="flex items-center justify-between text-blue-600 text-xs">
+                            <span>Booked</span>
+                            <span className="font-medium">
+                              {new Date(slot.matchingWorkOrderItem.startDate).toLocaleDateString()} - {new Date(slot.matchingWorkOrderItem.endDate).toLocaleDateString()}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
                     {slot.isBlocked && (

@@ -46,10 +46,18 @@ export default function ITDeploymentsPage() {
     return <Redirect to="/" />;
   }
 
-  // Fetch accepted release orders
+  // Fetch release orders ready for IT (both accepted and ready_for_it status)
   const { data: acceptedOrders = [], isLoading } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_it" }],
+  });
+
+  // Also fetch accepted orders to get all items
+  const { data: acceptedOrdersAlt = [] } = useQuery<ReleaseOrderEntry[]>({
     queryKey: ["/api/release-orders", { status: "accepted" }],
   });
+
+  // Combine both to get all items
+  const allOrders = [...acceptedOrders, ...acceptedOrdersAlt.filter(a => !acceptedOrders.some(b => b.releaseOrder.id === a.releaseOrder.id))];
 
   // Fetch deployments from database
   const { data: deployments = [], isLoading: loadingDeployments } = useQuery<any[]>({
@@ -58,7 +66,7 @@ export default function ITDeploymentsPage() {
 
   // Get items that need deployment (have banners)
   const itemsToDeploy = useMemo(() => {
-    return acceptedOrders.flatMap((entry) =>
+    return allOrders.flatMap((entry) =>
       entry.items
         .filter((it: any) => !it.addonType && it.bannerUrl)
         .map((it: any) => {
@@ -104,7 +112,7 @@ export default function ITDeploymentsPage() {
           };
         })
     );
-  }, [acceptedOrders, deployments]);
+  }, [allOrders, deployments]);
 
   // Separate by status
   const pendingItems = itemsToDeploy.filter((item) => item.deploymentStatus === "pending");
@@ -120,17 +128,31 @@ export default function ITDeploymentsPage() {
   });
 
   const deployBannerMutation = useMutation({
-    mutationFn: async ({ releaseOrderId, itemId, bannerUrl }: { releaseOrderId: number; itemId: number; bannerUrl: string }) => {
-      // TODO: Implement actual deployment API
-      // POST /api/deployments/deploy
-      return await apiRequest("POST", "/api/deployments/deploy", {
-        releaseOrderId,
+    mutationFn: async ({ releaseOrder, itemId, bannerUrl }: { releaseOrder: any; itemId: number; bannerUrl: string }) => {
+      // Validate user exists
+      if (!user?.id) {
+        throw new Error("User not authenticated. Please log in again.");
+      }
+
+      // Determine if we should send customRoNumber or releaseOrderId
+      const isCustomId = typeof releaseOrder.customRoNumber === 'string' && releaseOrder.customRoNumber.startsWith('RO');
+      const payload: any = {
         workOrderItemId: itemId,
         bannerUrl,
-        deployedById: user?.id,
-      });
+        deployedById: user.id,
+      };
+      
+      if (isCustomId) {
+        payload.customRoNumber = releaseOrder.customRoNumber;
+      } else {
+        payload.releaseOrderId = releaseOrder.id;
+      }
+
+      return await apiRequest("POST", "/api/deployments/deploy", payload);
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "ready_for_it" }] });
       queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "accepted" }] });
       queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
       toast({
@@ -519,7 +541,7 @@ export default function ITDeploymentsPage() {
                   onClick={() => {
                     if (selectedItem.bannerUrl) {
                       deployBannerMutation.mutate({
-                        releaseOrderId: selectedItem.releaseOrder.id,
+                        releaseOrder: selectedItem.releaseOrder,
                         itemId: selectedItem.id,
                         bannerUrl: selectedItem.bannerUrl,
                       });

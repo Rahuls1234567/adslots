@@ -197,6 +197,7 @@ export default function AdminDashboard() {
                       <SelectItem value="accounts">Accounts</SelectItem>
                       <SelectItem value="it">IT</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="material">Material</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

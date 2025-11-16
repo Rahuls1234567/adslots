@@ -1,9 +1,10 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Server, CheckCircle, XCircle, Clock, Activity, Upload, Download, Eye } from "lucide-react";
+import { Package, CheckCircle, XCircle, Clock, Activity, Upload, Download, Eye, Rocket } from "lucide-react";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth-context";
@@ -26,129 +27,106 @@ const formatCurrency = (value: number | string | null | undefined) => {
 
 const humanize = (value?: string | null) => (value ? value.replace(/_/g, " ") : "");
 
-export default function ITDashboard() {
-  const { user } = useAuth();
+export default function MaterialDashboard() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [, navigate] = useLocation();
   const [selectedEntry, setSelectedEntry] = useState<ReleaseOrderEntry | null>(null);
   const [selectedItem, setSelectedItem] = useState<any | null>(null);
 
-  // Fetch release orders ready for IT deployment
-  const { data: acceptedOrders = [], isLoading } = useQuery<ReleaseOrderEntry[]>({
-    queryKey: ["/api/release-orders", { status: "ready_for_it" }],
+  // Fetch release orders ready for material team (magazine slots)
+  const { data: materialOrders = [], isLoading } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_material" }],
   });
 
-  // Fetch deployments from database
-  const { data: deployments = [], isLoading: loadingDeployments } = useQuery<any[]>({
+  // Fetch all release orders to get all magazine items for accurate counting
+  const { data: allReleaseOrders = [] } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders"],
+  });
+
+  // Fetch deployments to count deployed magazine banners
+  const { data: deployments = [] } = useQuery<any[]>({
     queryKey: ["/api/deployments"],
   });
 
-  // Get items that need deployment (have banners)
-  // Only show items that are NOT yet deployed
-  const itemsToDeploy = acceptedOrders.flatMap((entry) =>
+  // Get items that are magazine slots and need material processing
+  const itemsToProcess = materialOrders.flatMap((entry) =>
     entry.items
-      .filter((it: any) => !it.addonType && it.bannerUrl)
+      .filter((it: any) => !it.addonType && it.bannerUrl && it.slot?.mediaType === "magazine")
       .map((it: any) => {
-        // Find deployment for this work order item
-        const deployment = deployments.find((d: any) => d.workOrderItemId === it.id);
         return {
           ...it,
           releaseOrder: entry.releaseOrder,
           workOrder: entry.workOrder,
           client: entry.client,
           slot: it.slot,
-          deployment,
         };
       })
-      // Filter out items that are already deployed
-      .filter((it: any) => !it.deployment || it.deployment.status !== "deployed")
   );
 
-  // Show all release orders ready for IT (with status "ready_for_it")
-  // Filter to show only those that have at least one pending item
-  const releaseOrdersWithPendingItems = acceptedOrders.filter((entry) => {
-    // Check if release order has any items that need deployment
-    const hasPendingItems = entry.items.some((it: any) => {
-      if (it.addonType || !it.bannerUrl) return false;
-      const deployment = deployments.find((d: any) => d.workOrderItemId === it.id);
-      return !deployment || deployment.status !== "deployed";
-    });
-    return hasPendingItems;
-  });
+  // Calculate deployed magazine banner count
+  // Get all magazine work order items from all release orders
+  const allMagazineItems = useMemo(() => {
+    return allReleaseOrders.flatMap((entry) =>
+      entry.items.filter((it: any) => {
+        if (it.addonType || !it.customSlotId) return false;
+        return it.slot?.mediaType === "magazine";
+      })
+    );
+  }, [allReleaseOrders]);
 
-  // Also show all release orders with status "ready_for_it" for reference
-  // (even if all items are deployed, show the release order)
-  const allReleaseOrdersForDisplay = acceptedOrders;
+  // Count deployed magazine banners by matching deployments to magazine work order items
+  const deployedMagazineBanners = useMemo(() => {
+    const deployedItemIds = new Set(
+      deployments
+        .filter((d: any) => d.status === "deployed")
+        .map((d: any) => d.workOrderItemId)
+    );
+    
+    return allMagazineItems.filter((item: any) => 
+      deployedItemIds.has(item.id)
+    );
+  }, [deployments, allMagazineItems]);
 
-  // Calculate counts from database
-  const deployedItemsCount = deployments.filter((d: any) => d.status === "deployed").length;
-  const pendingDeploymentCount = itemsToDeploy.filter((item: any) => !item.deployment || item.deployment.status !== "deployed").length;
-  const activeDeploymentsCount = deployments.filter((d: any) => {
-    if (d.status !== "deployed") return false;
-    // Check if deployment is still active (campaign not expired)
-    const item = itemsToDeploy.find((it: any) => it.id === d.workOrderItemId);
-    if (!item) return false;
-    const endDate = new Date(item.endDate);
-    const now = new Date();
-    return endDate >= now;
-  }).length;
+  const deployedBannersCount = deployedMagazineBanners.length;
 
-  const deployBannerMutation = useMutation({
-    mutationFn: async ({ releaseOrder, itemId, bannerUrl }: { releaseOrder: any; itemId: number; bannerUrl: string }) => {
-      // Validate user exists
-      if (!user?.id) {
-        throw new Error("User not authenticated. Please log in again.");
-      }
+  // Calculate counts
+  const pendingProcessingCount = itemsToProcess.length;
+  const totalMagazineOrders = materialOrders.length;
 
-      // Determine if we should send customRoNumber or releaseOrderId
-      const isCustomId = typeof releaseOrder.customRoNumber === 'string' && releaseOrder.customRoNumber.startsWith('RO');
-      const payload: any = {
-        workOrderItemId: itemId,
-        bannerUrl,
-        deployedById: user.id,
-      };
-      
-      if (isCustomId) {
-        payload.customRoNumber = releaseOrder.customRoNumber;
-      } else {
-        payload.releaseOrderId = releaseOrder.id;
-      }
-      
-      const res = await fetch("/api/deployments/deploy", {
+  const processMagazineMutation = useMutation({
+    mutationFn: async ({ releaseOrderId, itemId }: { releaseOrderId: number | string; itemId: number }) => {
+      // Mark magazine slot as processed by material team
+      const res = await fetch(`/api/release-orders/${releaseOrderId}/material-processed`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          workOrderItemId: itemId,
+          processedById: user?.id,
+        }),
       });
-      
       if (!res.ok) {
-        const errorText = await res.text();
-        let errorMessage = "Failed to deploy banner";
-        try {
-          const errorJson = JSON.parse(errorText);
-          errorMessage = errorJson.error || errorMessage;
-        } catch {
-          errorMessage = errorText || errorMessage;
-        }
-        throw new Error(errorMessage);
+        const errorData = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(errorData.error || `HTTP ${res.status}: ${res.statusText}`);
       }
       return res.json();
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "ready_for_material" }] });
       queryClient.invalidateQueries({ queryKey: ["/api/release-orders"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "ready_for_it" }] });
       queryClient.invalidateQueries({ queryKey: ["/api/deployments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/bookings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/work-orders"] });
       toast({
         title: "Success",
-        description: "Banner deployed successfully",
+        description: "Magazine slot processed successfully and deployment recorded",
       });
       setSelectedItem(null);
     },
     onError: (error: any) => {
       toast({
         title: "Error",
-        description: error.message || "Failed to deploy banner",
+        description: error.message || "Failed to process magazine slot",
         variant: "destructive",
       });
     },
@@ -161,6 +139,7 @@ export default function ITDashboard() {
         pageType: item.slot.pageType,
         position: item.slot.position,
         dimensions: item.slot.dimensions,
+        magazinePageNumber: item.slot.magazinePageNumber,
       };
     }
     return {
@@ -168,6 +147,7 @@ export default function ITDashboard() {
       pageType: "Unknown",
       position: "Unknown",
       dimensions: "Unknown",
+      magazinePageNumber: null,
     };
   };
 
@@ -181,81 +161,67 @@ export default function ITDashboard() {
   return (
     <div className="space-y-8 p-6">
       <div>
-        <h1 className="text-3xl font-bold">IT Team Dashboard</h1>
-        <p className="text-muted-foreground">Manage banner deployments and technical operations</p>
+        <h1 className="text-3xl font-bold">Material Team Dashboard</h1>
+        <p className="text-muted-foreground">Manage magazine slot deployments and material operations</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4 mb-6">
+      <div className="grid gap-4 md:grid-cols-3 mb-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Deployments</CardTitle>
+            <CardTitle className="text-sm font-medium">Pending Processing</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{pendingDeploymentCount}</div>
-            <p className="text-xs text-muted-foreground">Banners awaiting deployment</p>
+            <div className="text-2xl font-bold">{pendingProcessingCount}</div>
+            <p className="text-xs text-muted-foreground">Magazine slots awaiting processing</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Campaigns</CardTitle>
-            <Activity className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Banners Deployed</CardTitle>
+            <Rocket className="h-4 w-4 text-emerald-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{activeDeploymentsCount}</div>
-            <p className="text-xs text-muted-foreground">Currently live</p>
+            <div className="text-2xl font-bold text-emerald-600">{deployedBannersCount}</div>
+            <p className="text-xs text-muted-foreground">Magazine banners deployed</p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Deployed Banners</CardTitle>
-            <Server className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
+            <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{deployedItemsCount}</div>
-            <p className="text-xs text-muted-foreground">All time</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">System Status</CardTitle>
-            <CheckCircle className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-500">Operational</div>
-            <p className="text-xs text-muted-foreground">All systems running</p>
+            <div className="text-2xl font-bold">{totalMagazineOrders}</div>
+            <p className="text-xs text-muted-foreground">Release orders assigned</p>
           </CardContent>
         </Card>
       </div>
 
       <div className="space-y-6">
         <div>
-          <h2 className="text-lg font-semibold mb-4">Pending Banner Deployments</h2>
+          <h2 className="text-lg font-semibold mb-4">Pending Magazine Slot Processing</h2>
           {isLoading ? (
             <div className="space-y-3">
               {[...Array(3)].map((_, i) => (
                 <Skeleton key={i} className="h-32 w-full" />
               ))}
             </div>
-          ) : itemsToDeploy.length === 0 ? (
+          ) : itemsToProcess.length === 0 ? (
             <Card>
               <CardContent className="py-12">
                 <div className="text-center text-muted-foreground">
-                  <Server className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No banners pending deployment</p>
+                  <Package className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No magazine slots pending processing</p>
                 </div>
               </CardContent>
             </Card>
           ) : (
             <div className="grid gap-4">
-              {itemsToDeploy.map((item, idx) => {
+              {itemsToProcess.map((item, idx) => {
                 const slotInfo = getSlotInfo(item);
-                const section = slotInfo.mediaType === 'website'
-                  ? `Website • ${PAGE_LABELS[slotInfo.pageType] ?? humanize(slotInfo.pageType)}`
-                  : humanize(slotInfo.mediaType);
                 return (
                   <Card key={`${item.releaseOrder.id}-${item.id}-${idx}`}>
                     <CardHeader className="flex flex-row items-center justify-between">
@@ -270,16 +236,16 @@ export default function ITDashboard() {
                           </div>
                         </CardDescription>
                       </div>
-                      <Badge variant="default">Ready for IT</Badge>
+                      <Badge variant="default">Ready for Material</Badge>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-4 text-sm">
                           <div>
                             <p className="text-muted-foreground">Slot Details</p>
-                            <p className="font-medium">{section}</p>
+                            <p className="font-medium">Magazine • {slotInfo.position}</p>
                             <p className="text-xs text-muted-foreground">
-                              Position: {slotInfo.position} • {slotInfo.dimensions}
+                              Page: {slotInfo.magazinePageNumber || "N/A"} • Dimensions: {slotInfo.dimensions}
                             </p>
                           </div>
                           <div>
@@ -325,8 +291,8 @@ export default function ITDashboard() {
                               }}
                               className="gap-2"
                             >
-                              <Upload className="h-4 w-4" />
-                              Deploy Banner
+                              <CheckCircle className="h-4 w-4" />
+                              Mark as Processed
                             </Button>
                           </div>
                         )}
@@ -340,35 +306,25 @@ export default function ITDashboard() {
         </div>
 
         <div>
-          <h2 className="text-lg font-semibold mb-4">Release Orders Ready for IT Deployment</h2>
+          <h2 className="text-lg font-semibold mb-4">Release Orders Ready for Material</h2>
           {isLoading ? (
             <div className="space-y-3">
               {[...Array(3)].map((_, i) => (
                 <Skeleton key={i} className="h-32 w-full" />
               ))}
             </div>
-          ) : allReleaseOrdersForDisplay.length === 0 ? (
+          ) : materialOrders.length === 0 ? (
             <Card>
               <CardContent className="py-12">
                 <div className="text-center text-muted-foreground">
                   <CheckCircle className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No release orders ready for IT deployment yet</p>
+                  <p>No release orders ready for material processing yet</p>
                 </div>
               </CardContent>
             </Card>
           ) : (
             <div className="grid gap-4">
-              {allReleaseOrdersForDisplay.map((entry) => {
-                // Count pending items for this release order
-                const pendingItemsCount = entry.items.filter((it: any) => {
-                  if (it.addonType || !it.bannerUrl) return false;
-                  const deployment = deployments.find((d: any) => d.workOrderItemId === it.id);
-                  return !deployment || deployment.status !== "deployed";
-                }).length;
-                const totalItemsCount = entry.items.filter((it: any) => !it.addonType && it.bannerUrl).length;
-                const allDeployed = totalItemsCount > 0 && pendingItemsCount === 0;
-                
-                return (
+              {materialOrders.map((entry) => (
                 <Card
                   key={entry.releaseOrder.id}
                   className="cursor-pointer hover:shadow-md transition"
@@ -382,14 +338,12 @@ export default function ITDashboard() {
                           Work Order: {entry.releaseOrder.workOrder?.customWorkOrderId || `WO #${entry.releaseOrder.workOrderId}`}
                         </div>
                         <div className="text-xs text-muted-foreground mt-1">
-                          {formatCurrency(entry.workOrder?.totalAmount)} • {entry.items.filter((it: any) => !it.addonType).length} item(s)
+                          {formatCurrency(entry.workOrder?.totalAmount)} • {entry.items.filter((it: any) => !it.addonType && it.slot?.mediaType === "magazine").length} magazine slot(s)
                         </div>
                       </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant={allDeployed ? "secondary" : "default"}>
-                        {allDeployed ? "All Deployed" : "Ready for IT"}
-                      </Badge>
+                      <Badge variant="default">Ready for Material</Badge>
                       <Badge variant={entry.releaseOrder.paymentStatus === 'completed' ? 'default' : 'outline'}>
                         {entry.releaseOrder.paymentStatus === 'completed' ? 'Paid' : 'Not Paid'}
                       </Badge>
@@ -403,32 +357,21 @@ export default function ITDashboard() {
                       Issued: {entry.releaseOrder.issuedAt ? new Date(entry.releaseOrder.issuedAt).toLocaleString() : '—'}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      Banners ready: {entry.items.filter((it: any) => !it.addonType && it.bannerUrl).length} / {entry.items.filter((it: any) => !it.addonType).length}
-                      {pendingItemsCount > 0 && (
-                        <span className="ml-2 font-medium text-orange-600">
-                          • {pendingItemsCount} pending deployment
-                        </span>
-                      )}
-                      {allDeployed && (
-                        <span className="ml-2 font-medium text-green-600">
-                          • All deployed
-                        </span>
-                      )}
+                      Magazine banners ready: {entry.items.filter((it: any) => !it.addonType && it.slot?.mediaType === "magazine" && it.bannerUrl).length} / {entry.items.filter((it: any) => !it.addonType && it.slot?.mediaType === "magazine").length}
                     </div>
                   </CardContent>
                 </Card>
-                );
-              })}
+              ))}
             </div>
           )}
         </div>
       </div>
 
-      {/* Deploy Banner Dialog */}
+      {/* Process Magazine Dialog */}
       <Dialog open={!!selectedItem} onOpenChange={(open) => !open && setSelectedItem(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Deploy Banner</DialogTitle>
+            <DialogTitle>Process Magazine Slot</DialogTitle>
           </DialogHeader>
           {selectedItem && (
             <div className="space-y-4">
@@ -440,11 +383,7 @@ export default function ITDashboard() {
                   </div>
                   <div>
                     <p className="text-muted-foreground">Work Order</p>
-                    <p className="font-medium">
-                      {selectedItem.workOrder?.customWorkOrderId || 
-                       selectedItem.releaseOrder.workOrder?.customWorkOrderId || 
-                       (selectedItem.releaseOrder.workOrderId ? `WO #${selectedItem.releaseOrder.workOrderId}` : "N/A")}
-                    </p>
+                    <p className="font-medium">{selectedItem.releaseOrder.workOrder?.customWorkOrderId || `WO #${selectedItem.releaseOrder.workOrderId}`}</p>
                   </div>
                   <div>
                     <p className="text-muted-foreground">Client</p>
@@ -459,17 +398,13 @@ export default function ITDashboard() {
                 </div>
                 
                 <div className="border rounded-md p-3 bg-muted/40">
-                  <p className="text-muted-foreground mb-2">Slot Details</p>
+                  <p className="text-muted-foreground mb-2">Magazine Slot Details</p>
                   <div className="space-y-1">
                     {selectedItem.slot ? (
                       <>
-                        <p className="font-medium">
-                          {selectedItem.slot.mediaType === 'website'
-                            ? `Website • ${PAGE_LABELS[selectedItem.slot.pageType] ?? humanize(selectedItem.slot.pageType)}`
-                            : humanize(selectedItem.slot.mediaType)}
-                        </p>
+                        <p className="font-medium">Magazine • {selectedItem.slot.position}</p>
                         <p className="text-xs text-muted-foreground">
-                          Position: {selectedItem.slot.position} • Dimensions: {selectedItem.slot.dimensions}
+                          Page Number: {selectedItem.slot.magazinePageNumber || "N/A"} • Dimensions: {selectedItem.slot.dimensions}
                         </p>
                       </>
                     ) : (
@@ -528,26 +463,23 @@ export default function ITDashboard() {
                   </Button>
                   <Button
                     onClick={() => {
-                      if (selectedItem.bannerUrl) {
-                        deployBannerMutation.mutate({
-                          releaseOrder: selectedItem.releaseOrder,
-                          itemId: selectedItem.id,
-                          bannerUrl: selectedItem.bannerUrl,
-                        });
-                      }
+                      processMagazineMutation.mutate({
+                        releaseOrderId: selectedItem.releaseOrder.customRoNumber || selectedItem.releaseOrder.id,
+                        itemId: selectedItem.id,
+                      });
                     }}
-                    disabled={deployBannerMutation.isPending || !selectedItem.bannerUrl || !user?.id}
+                    disabled={processMagazineMutation.isPending}
                     className="gap-2"
                   >
-                    {deployBannerMutation.isPending ? (
+                    {processMagazineMutation.isPending ? (
                       <>
                         <Clock className="h-4 w-4 animate-spin" />
-                        Deploying...
+                        Processing...
                       </>
                     ) : (
                       <>
-                        <Upload className="h-4 w-4" />
-                        Confirm Deploy
+                        <CheckCircle className="h-4 w-4" />
+                        Mark as Processed
                       </>
                     )}
                   </Button>
@@ -560,3 +492,4 @@ export default function ITDashboard() {
     </div>
   );
 }
+

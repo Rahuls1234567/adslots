@@ -1,4 +1,4 @@
-import { Home, LayoutDashboard, ClipboardCheck, DollarSign, Settings, LogOut, Package, BarChart3, Upload, Shield, Users, CheckCircle } from "lucide-react";
+import { Home, LayoutDashboard, ClipboardCheck, DollarSign, Settings, LogOut, Package, BarChart3, Upload, Shield, Users, CheckCircle, Clock } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -59,6 +59,12 @@ const roleMenuItems = {
     { title: "Slot Master", url: "/slot-master", icon: Settings },
     { title: "Accepted R.O.", url: "/accepted-release-orders", icon: CheckCircle },
   ],
+  material: [
+    { title: "Dashboard", url: "/", icon: LayoutDashboard },
+    { title: "Pending", url: "/material-pending", icon: Clock },
+    { title: "Deployed", url: "/material-deployed", icon: CheckCircle },
+    { title: "Accepted R.O.", url: "/accepted-release-orders", icon: CheckCircle },
+  ],
   admin: [
     { title: "Admin Dashboard", url: "/", icon: Shield },
     { title: "User Management", url: "/users", icon: Users },
@@ -84,16 +90,23 @@ export function AppSidebar() {
           <SidebarGroupLabel>Ad Banner System</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={`link-${item.title.toLowerCase().replace(/ /g, "-")}`}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {menuItems.map((item) => {
+                const isActive = location === item.url;
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton 
+                      asChild 
+                      isActive={isActive}
+                      className={isActive ? "bg-primary/10 text-primary font-semibold border-l-2 border-primary" : ""}
+                    >
+                      <Link href={item.url} data-testid={`link-${item.title.toLowerCase().replace(/ /g, "-")}`}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

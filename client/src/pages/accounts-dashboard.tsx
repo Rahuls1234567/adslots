@@ -67,11 +67,36 @@ export default function AccountsDashboard() {
           proforma: proformaInvoice || null,
           items,
         };
+      })
+      .sort((a, b) => {
+        // Sort by createdAt descending (newest first)
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        return dateB - dateA;
       });
   }, [workOrders, invoices]);
 
-  const paidPOs = purchaseOrders.filter((po) => po.paymentStatus === "Paid");
-  const unpaidPOs = purchaseOrders.filter((po) => po.paymentStatus !== "Paid");
+  const paidPOs = useMemo(() => {
+    return purchaseOrders
+      .filter((po) => po.paymentStatus === "Paid")
+      .sort((a, b) => {
+        // Sort by createdAt descending (newest first)
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        return dateB - dateA;
+      });
+  }, [purchaseOrders]);
+
+  const unpaidPOs = useMemo(() => {
+    return purchaseOrders
+      .filter((po) => po.paymentStatus !== "Paid")
+      .sort((a, b) => {
+        // Sort by createdAt descending (newest first)
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        return dateB - dateA;
+      });
+  }, [purchaseOrders]);
 
   const handleUploadProforma = async (workOrderId: number | string, file: File) => {
     try {

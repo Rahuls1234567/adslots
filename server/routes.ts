@@ -282,6 +282,29 @@ export function registerRoutes(app: Express) {
     res.json(user);
   });
 
+  // RO Details routes
+  app.get("/api/media-types", async (req, res) => {
+    try {
+      const mediaTypes = await storage.getMediaTypes();
+      res.json(mediaTypes);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/positions", async (req, res) => {
+    try {
+      const { mediaType } = req.query as { mediaType?: string };
+      if (!mediaType) {
+        return res.status(400).json({ error: "mediaType query parameter is required" });
+      }
+      const positions = await storage.getPositionsByMediaType(mediaType);
+      res.json(positions);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Slot routes
   app.get("/api/slots", async (req, res) => {
     const slots = await storage.getAllSlots();
@@ -2349,7 +2372,7 @@ export function registerRoutes(app: Express) {
       const wo = await storage.getWorkOrderByCustomId(ro.customWorkOrderId);
       const client = wo ? await storage.getUser(wo.clientId) : undefined;
 
-      let nextStatus: "pending_vp_review" | "pending_pv_review" | "accepted" | null = null;
+      let nextStatus: "pending_vp_review" | "pending_pv_review" | "accepted" | "ready_for_it" | "ready_for_material" | null = null;
       if (ro.status === "pending_manager_review" || ro.status === "pending_banner_upload") {
         // Allow approval from pending_banner_upload if manager is reviewing banners before client submits
         // Check if all banners are uploaded before allowing approval
@@ -2371,7 +2394,31 @@ export function registerRoutes(app: Express) {
       } else if (ro.status === "pending_vp_review") {
         nextStatus = "pending_pv_review";
       } else if (ro.status === "pending_pv_review") {
-        nextStatus = "accepted";
+        // PV Sir approval - route based on media type
+        // Get all work order items to check media types
+        const rawItems = await db.select().from(workOrderItems)
+          .where(eq(workOrderItems.customWorkOrderId, ro.customWorkOrderId));
+        
+        // Get slots for each item to determine media type
+        const slotItems = rawItems.filter((item: any) => !item.addonType);
+        let hasMagazine = false;
+        
+        for (const item of slotItems) {
+          if (item.customSlotId) {
+            const slot = await storage.getSlotByCustomId(item.customSlotId);
+            if (slot && slot.mediaType === "magazine") {
+              hasMagazine = true;
+              break;
+            }
+          }
+        }
+        
+        // Route based on media type: magazine → material team, others → IT team
+        if (hasMagazine) {
+          nextStatus = "ready_for_material";
+        } else {
+          nextStatus = "ready_for_it";
+        }
       }
 
       if (!nextStatus) {
@@ -2415,6 +2462,50 @@ export function registerRoutes(app: Express) {
               wo?.id || 0,
               approvalUrl
             );
+          }
+        }
+      } else if (nextStatus === "ready_for_it") {
+        // Notify IT team for deployment
+        const itUsers = await db.select().from(users).where(eq(users.role, "it"));
+        for (const itUser of itUsers) {
+          await notificationService.createNotification({
+            userId: itUser.id,
+            type: "ro_ready_for_deployment",
+            message: `Release Order ${ro.customRoNumber || `#${id}`} for ${client?.name ?? (wo?.customWorkOrderId ? `WO ${wo.customWorkOrderId}` : "Unknown")} is ready for IT deployment.`,
+          });
+        }
+        // Also notify other stakeholders
+        const notifyRoles = ["manager", "vp", "pv_sir"] as const;
+        for (const role of notifyRoles) {
+          const recipients = await db.select().from(users).where(eq(users.role, role));
+          for (const recipient of recipients) {
+            await notificationService.createNotification({
+              userId: recipient.id,
+              type: "ro_accepted",
+              message: `Release Order ${ro.customRoNumber || `#${id}`} for ${client?.name ?? (wo?.customWorkOrderId ? `WO ${wo.customWorkOrderId}` : "Unknown")} has been approved and sent to IT team.`,
+            });
+          }
+        }
+      } else if (nextStatus === "ready_for_material") {
+        // Notify Material team for magazine deployment
+        const materialUsers = await db.select().from(users).where(eq(users.role, "material"));
+        for (const materialUser of materialUsers) {
+          await notificationService.createNotification({
+            userId: materialUser.id,
+            type: "ro_ready_for_deployment",
+            message: `Release Order ${ro.customRoNumber || `#${id}`} for ${client?.name ?? (wo?.customWorkOrderId ? `WO ${wo.customWorkOrderId}` : "Unknown")} is ready for Material team (magazine slot).`,
+          });
+        }
+        // Also notify other stakeholders
+        const notifyRoles = ["manager", "vp", "pv_sir"] as const;
+        for (const role of notifyRoles) {
+          const recipients = await db.select().from(users).where(eq(users.role, role));
+          for (const recipient of recipients) {
+            await notificationService.createNotification({
+              userId: recipient.id,
+              type: "ro_accepted",
+              message: `Release Order ${ro.customRoNumber || `#${id}`} for ${client?.name ?? (wo?.customWorkOrderId ? `WO ${wo.customWorkOrderId}` : "Unknown")} has been approved and sent to Material team.`,
+            });
           }
         }
       } else if (nextStatus === "accepted") {
@@ -2560,6 +2651,191 @@ export function registerRoutes(app: Express) {
       res.json({ success: true, newStatus: nextStatus, notifiedRole: notifyRole });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Material team marks magazine slot as processed
+  app.post("/api/release-orders/:id/material-processed", async (req, res) => {
+    try {
+      const idParam = req.params.id;
+      const ro = await getReleaseOrderByIdParam(idParam);
+      if (!ro) return res.status(404).json({ error: "Release Order not found" });
+      const id = ro.id; // Use integer ID for operations
+      
+      if (ro.status !== "ready_for_material") {
+        return res.status(400).json({ error: "Release Order is not ready for material processing." });
+      }
+
+      const { workOrderItemId, processedById } = req.body as { workOrderItemId?: number; processedById?: number };
+      if (!workOrderItemId) {
+        return res.status(400).json({ error: "Work order item ID is required" });
+      }
+
+      // Get the work order item to verify it's a magazine slot
+      const item = await db.select().from(workOrderItems)
+        .where(eq(workOrderItems.id, workOrderItemId))
+        .then(items => items[0]);
+      
+      if (!item) {
+        return res.status(404).json({ error: "Work order item not found" });
+      }
+
+      // Verify it's a magazine slot
+      if (item.customSlotId) {
+        const slot = await storage.getSlotByCustomId(item.customSlotId);
+        if (!slot || slot.mediaType !== "magazine") {
+          return res.status(400).json({ error: "This item is not a magazine slot" });
+        }
+      }
+
+      // Check if all magazine slots in this release order are processed
+      const allItems = await db.select().from(workOrderItems)
+        .where(eq(workOrderItems.customWorkOrderId, ro.customWorkOrderId));
+      
+      const magazineItems = await Promise.all(
+        allItems
+          .filter((it: any) => !it.addonType && it.customSlotId)
+          .map(async (it: any) => {
+            const s = await storage.getSlotByCustomId(it.customSlotId!);
+            return { ...it, isMagazine: s?.mediaType === "magazine" };
+          })
+      );
+
+      const magazineSlots = magazineItems.filter((it: any) => it.isMagazine);
+      // For now, we'll just log the processing. In the future, you might want to track processed items
+      // or update the release order status when all magazine slots are processed
+
+      // Ensure customRoNumber exists
+      if (!ro.customRoNumber) {
+        return res.status(400).json({ error: "Release Order missing customRoNumber. Cannot create deployment." });
+      }
+
+      // Ensure bannerUrl exists
+      if (!item.bannerUrl) {
+        return res.status(400).json({ error: "Work order item missing banner. Cannot create deployment." });
+      }
+
+      // Get processed by user
+      let deployerUser = null;
+      if (processedById) {
+        deployerUser = await storage.getUser(processedById);
+        if (!deployerUser) {
+          return res.status(404).json({ error: "User not found" });
+        }
+      } else {
+        return res.status(400).json({ error: "processedById is required" });
+      }
+
+      // Create deployment record in database (similar to IT deployment)
+      let deployment = null;
+      try {
+        // Check if deployment already exists for this work order item
+        const existingDeployments = await db.select().from(deployments)
+          .where(eq(deployments.workOrderItemId, workOrderItemId));
+        
+        const existingDeployment = existingDeployments.find((d: any) => d.status === "deployed");
+        
+        if (!existingDeployment) {
+          // Create new deployment record
+          deployment = await storage.createDeployment({
+            customRoNumber: ro.customRoNumber,
+            workOrderItemId,
+            bannerUrl: item.bannerUrl,
+            customSlotId: item.customSlotId || null,
+            deployedById: processedById as any,
+            status: "deployed" as any,
+          });
+          console.log(`[Material Processing] Deployment created for work order item ${workOrderItemId}, deployment ID: ${deployment.id}`);
+        } else {
+          // Deployment already exists, use existing one
+          deployment = existingDeployment;
+          console.log(`[Material Processing] Deployment already exists for work order item ${workOrderItemId}, using existing deployment ID: ${deployment.id}`);
+        }
+      } catch (deploymentError: any) {
+        console.error(`[Material Processing] Error creating deployment:`, deploymentError);
+        // Continue even if deployment creation fails (non-critical for processing)
+      }
+
+      // Create activity log
+      try {
+        await storage.createActivityLog({
+          actorId: processedById as any,
+          actorRole: "material" as any,
+          action: "magazine_slot_processed",
+          entityType: "release_order",
+          entityId: id,
+          metadata: JSON.stringify({
+            workOrderItemId,
+            customSlotId: item.customSlotId,
+            releaseOrderId: id,
+            deploymentId: deployment?.id || null,
+          }),
+        });
+      } catch {}
+
+      // Check if all magazine slots are processed by checking deployments
+      // Get all deployments for this release order
+      const allDeploymentsForRO = ro.customRoNumber 
+        ? await db.select().from(deployments)
+            .where(eq(deployments.customRoNumber, ro.customRoNumber))
+        : [];
+      
+      // Get deployed magazine item IDs
+      const deployedMagazineItemIds = new Set(
+        allDeploymentsForRO
+          .filter((d: any) => d.status === "deployed")
+          .map((d: any) => d.workOrderItemId)
+      );
+      
+      // Check if all magazine slots are processed (have deployments)
+      const allMagazineItemsProcessed = magazineSlots.length > 0 && 
+        magazineSlots.every((item: any) => deployedMagazineItemIds.has(item.id));
+      
+      // Check if there are IT items that need deployment
+      const nonMagazineItems = await Promise.all(
+        allItems
+          .filter((it: any) => !it.addonType && it.customSlotId)
+          .map(async (it: any) => {
+            const s = await storage.getSlotByCustomId(it.customSlotId!);
+            return { ...it, isMagazine: s?.mediaType === "magazine" };
+          })
+      );
+      
+      const itDeploymentItems = nonMagazineItems
+        .filter((it: any) => !it.isMagazine)
+        .map((it: any) => it.id || it.item?.id);
+      
+      // Check if IT items are deployed
+      const allDeployments = ro.customRoNumber 
+        ? await db.select().from(deployments)
+            .where(eq(deployments.customRoNumber, ro.customRoNumber))
+        : [];
+      
+      const deployedItemIds = new Set(allDeployments
+        .filter((d: any) => d.status === "deployed")
+        .map((d: any) => d.workOrderItemId));
+      
+      const allItItemsDeployed = itDeploymentItems.length === 0 || 
+        itDeploymentItems.every((itemId: any) => deployedItemIds.has(itemId));
+      
+      // If all magazine items are processed AND all IT items are deployed (if any), update status to "deployed"
+      if (allMagazineItemsProcessed && allItItemsDeployed && ro.status === "ready_for_material") {
+        await db.update(releaseOrders)
+          .set({ status: "deployed" as any })
+          .where(eq(releaseOrders.id, id));
+        
+        console.log(`[Material Processing] All items processed for RO ${ro.customRoNumber || `#${id}`}, status updated to "deployed"`);
+      }
+      
+      res.json({ 
+        success: true, 
+        message: "Magazine slot marked as processed and deployment recorded",
+        remainingMagazineSlots: Math.max(0, magazineSlots.length - deployedMagazineItemIds.size),
+        deploymentId: deployment?.id || null,
+      });
+    } catch (error: any) {
+      console.error(`[POST /api/release-orders/:id/material-processed] Error:`, error);
+      res.status(400).json({ error: error.message || "Failed to process magazine slot" });
     }
   });
 
@@ -3770,17 +4046,28 @@ export function registerRoutes(app: Express) {
       const { customRoNumber, releaseOrderId, workOrderItemId, bannerUrl, deployedById } = req.body;
 
       if ((!customRoNumber && !releaseOrderId) || !workOrderItemId || !bannerUrl || !deployedById) {
-        return res.status(400).json({ error: "Missing required fields" });
+        return res.status(400).json({ error: "Missing required fields: customRoNumber or releaseOrderId, workOrderItemId, bannerUrl, and deployedById are required" });
       }
 
-      // Get release order - try by customRoNumber first, then by ID
-      const ro = customRoNumber 
-        ? await storage.getReleaseOrders().then(ros => ros.find((r: any) => r.customRoNumber === customRoNumber))
-        : releaseOrderId 
-          ? await storage.getReleaseOrder(releaseOrderId)
-          : null;
+      // Get release order - use helper function to handle both custom RO numbers and integer IDs
+      let ro: any = null;
+      if (customRoNumber) {
+        // If customRoNumber is provided, use it directly
+        ro = await storage.getReleaseOrderByCustomId(customRoNumber);
+      } else if (releaseOrderId) {
+        // Use helper function to handle both custom ID strings (RO...) and integer IDs
+        if (typeof releaseOrderId === 'string' && releaseOrderId.startsWith('RO')) {
+          ro = await storage.getReleaseOrderByCustomId(releaseOrderId);
+        } else {
+          const id = typeof releaseOrderId === 'string' ? parseInt(releaseOrderId) : releaseOrderId;
+          if (!isNaN(id as any)) {
+            ro = await storage.getReleaseOrder(id as number);
+          }
+        }
+      }
+      
       if (!ro) {
-        return res.status(404).json({ error: "Release Order not found" });
+        return res.status(404).json({ error: `Release Order not found: ${customRoNumber || releaseOrderId}` });
       }
 
       // Get work order item
@@ -3804,9 +4091,14 @@ export function registerRoutes(app: Express) {
         return res.status(404).json({ error: "User not found" });
       }
 
+      // Ensure customRoNumber exists
+      if (!ro.customRoNumber) {
+        return res.status(400).json({ error: "Release Order missing customRoNumber. Cannot create deployment." });
+      }
+
       // Create deployment record in database
       const deployment = await storage.createDeployment({
-        customRoNumber: ro.customRoNumber!,
+        customRoNumber: ro.customRoNumber,
         workOrderItemId,
         bannerUrl,
         customSlotId: item.customSlotId || null,
@@ -3832,12 +4124,67 @@ export function registerRoutes(app: Express) {
         }),
       });
 
+      // Check if all non-magazine items in this release order are deployed
+      // Get all work order items for this release order
+      const allWorkOrderItems = await db.select().from(workOrderItems)
+        .where(eq(workOrderItems.customWorkOrderId, ro.customWorkOrderId));
+      
+      // Filter for non-magazine, non-addon items (these need IT deployment)
+      const nonMagazineItems = await Promise.all(
+        allWorkOrderItems
+          .filter((it: any) => !it.addonType && it.customSlotId)
+          .map(async (it: any) => {
+            const slot = await storage.getSlotByCustomId(it.customSlotId!);
+            return { item: it, isMagazine: slot?.mediaType === "magazine" };
+          })
+      );
+      
+      const itDeploymentItems = nonMagazineItems
+        .filter(({ isMagazine }) => !isMagazine)
+        .map(({ item }) => item);
+      
+      // Get all deployments for this release order
+      const allDeployments = await db.select().from(deployments)
+        .where(eq(deployments.customRoNumber, ro.customRoNumber));
+      
+      // Check if all IT deployment items are deployed
+      const deployedItemIds = new Set(allDeployments
+        .filter((d: any) => d.status === "deployed")
+        .map((d: any) => d.workOrderItemId));
+      
+      const allItItemsDeployed = itDeploymentItems.length > 0 && 
+        itDeploymentItems.every((item: any) => deployedItemIds.has(item.id));
+      
+      // If all IT items are deployed, update release order status
+      // But only if the RO is currently "ready_for_it"
+      if (allItItemsDeployed && ro.status === "ready_for_it") {
+        // Check if there are magazine items that need material processing
+        const magazineItems = nonMagazineItems
+          .filter(({ isMagazine }) => isMagazine)
+          .map(({ item }) => item);
+        
+        if (magazineItems.length > 0) {
+          // There are magazine items, so check if they're all processed
+          // Material processing is tracked differently (not in deployments table)
+          // For now, if there are magazine items, don't change status yet
+          // The status will change to "deployed" when material team processes all items
+        } else {
+          // No magazine items, all IT items deployed - update to "deployed"
+          await db.update(releaseOrders)
+            .set({ status: "deployed" as any })
+            .where(eq(releaseOrders.id, ro.id));
+          
+          console.log(`[Deployment] All IT items deployed for RO ${ro.customRoNumber}, status updated to "deployed"`);
+        }
+      }
+
       res.json({
         success: true,
         message: "Banner deployed successfully",
         deployment: {
           id: deployment.id,
-          releaseOrderId,
+          releaseOrderId: customRoNumber || releaseOrderId,
+          customRoNumber: ro.customRoNumber,
           workOrderItemId,
           bannerUrl,
           customSlotId: item.customSlotId,
@@ -3846,7 +4193,9 @@ export function registerRoutes(app: Express) {
         },
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error("[Deployment Error]", error);
+      const errorMessage = error?.message || error?.toString() || "Unknown error occurred during deployment";
+      res.status(500).json({ error: errorMessage });
     }
   });
 

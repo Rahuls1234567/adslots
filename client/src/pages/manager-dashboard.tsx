@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,7 +15,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardCheck, AlertCircle, TrendingUp, DollarSign, Plus } from "lucide-react";
+import { ClipboardCheck, AlertCircle, TrendingUp, DollarSign, Plus, FileText, Calendar as CalendarIcon, Package, ArrowRight, Clock, Users, Lock, Unlock, Ban, MessageSquare } from "lucide-react";
 import type { Booking, Slot } from "@shared/schema";
 import { useLocation } from "wouter";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -36,7 +36,7 @@ const PAGE_LABELS: Record<string, string> = {
 };
 
 const slotFormSchema = z.object({
-  mediaType: z.enum(["website", "mobile", "email", "magazine"]),
+  mediaType: z.enum(["website", "mobile", "email", "magazine", "whatsapp"]),
   pageType: z.string().min(1),
   position: z.string().min(1),
   dimensions: z.string().min(1),
@@ -44,15 +44,52 @@ const slotFormSchema = z.object({
   status: z.enum(["available", "pending"]).default("available"),
 });
 
+// Helper function to map database media type to enum value
+const mapMediaTypeToEnum = (dbMediaType: string): "website" | "mobile" | "email" | "magazine" | "whatsapp" => {
+  const mapping: Record<string, "website" | "mobile" | "email" | "magazine" | "whatsapp"> = {
+    "Website": "website",
+    "Mobile APP": "mobile",
+    "Email": "email",
+    "Magazine": "magazine",
+    "Whatsapp": "whatsapp",
+  };
+  return mapping[dbMediaType] || "website";
+};
+
+// Helper function to map enum value to database media type
+const mapEnumToMediaType = (enumValue: string): string => {
+  const mapping: Record<string, string> = {
+    "website": "Website",
+    "mobile": "Mobile APP",
+    "email": "Email",
+    "magazine": "Magazine",
+    "whatsapp": "Whatsapp",
+  };
+  return mapping[enumValue] || enumValue;
+};
+
 export default function ManagerDashboard() {
   const [createSlotOpen, setCreateSlotOpen] = useState(false);
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { user } = useAuth();
   const [blockOpen, setBlockOpen] = useState(false);
-  const [blockForm, setBlockForm] = useState<{ slotId?: number; reason?: string; start?: string; end?: string; mediaType?: "website" | "mobile" | "magazine" | "email"; pageType?: string }>({});
+  const [blockForm, setBlockForm] = useState<{ slotId?: number; reason?: string; start?: string; end?: string; mediaType?: "website" | "mobile" | "magazine" | "email" | "whatsapp"; pageType?: string }>({});
   const [blockStartDate, setBlockStartDate] = useState<Date | null>(null);
   const [blockEndDate, setBlockEndDate] = useState<Date | null>(null);
+
+  // Initialize form first (needed for form.watch)
+  const form = useForm<z.infer<typeof slotFormSchema>>({
+    resolver: zodResolver(slotFormSchema),
+    defaultValues: {
+      mediaType: "website",
+      pageType: "other", // Default page type (hidden from form)
+      position: "",
+      dimensions: "728x90", // Default dimensions
+      pricing: 0,
+      status: "available",
+    },
+  });
 
   // Load all slots for dropdown selection
   const { data: allSlots = [] } = useQuery<Slot[]>({ queryKey: ["/api/slots"] });
@@ -62,18 +99,88 @@ export default function ManagerDashboard() {
     return true;
   });
 
+  // Fetch media types from database
+  const { data: mediaTypesData, isLoading: isLoadingMediaTypes, error: mediaTypesError } = useQuery<string[]>({
+    queryKey: ["/api/media-types"],
+    queryFn: async () => {
+      const response = await apiRequest("GET", "/api/media-types");
+      const result = await response.json();
+      return Array.isArray(result) ? result : [];
+    },
+    retry: 1,
+  });
+
+  // Fallback to default media types if API fails or returns empty
+  const allMediaTypes = mediaTypesData && mediaTypesData.length > 0 
+    ? mediaTypesData 
+    : ["Website", "Mobile APP", "Email", "Magazine", "Whatsapp"];
+  
+  // Filter to only include valid media types that match the schema enum
+  const validMediaTypes = ["Website", "Mobile APP", "Email", "Magazine", "Whatsapp"];
+  const mediaTypes = allMediaTypes.filter(mt => validMediaTypes.includes(mt));
+
+  // Get selected media type from form (safely)
+  const selectedMediaType = form.watch("mediaType") || "website";
+  const dbMediaType = selectedMediaType ? mapEnumToMediaType(selectedMediaType) : null;
+
+  // Fetch positions based on selected media type
+  const { data: positionsData, error: positionsError, isLoading: isLoadingPositions, refetch: refetchPositions } = useQuery<string[]>({
+    queryKey: ["/api/positions", dbMediaType],
+    queryFn: async () => {
+      if (!dbMediaType) return [];
+      try {
+        const response = await apiRequest("GET", `/api/positions?mediaType=${encodeURIComponent(dbMediaType)}`);
+        const result = await response.json();
+        console.log("Positions fetched for", dbMediaType, ":", result);
+        const positionsArray = Array.isArray(result) ? result : [];
+        console.log("Positions array:", positionsArray, "Length:", positionsArray.length);
+        return positionsArray;
+      } catch (error) {
+        console.error("Error fetching positions:", error);
+        return [];
+      }
+    },
+    enabled: !!dbMediaType && !!selectedMediaType,
+    retry: 1,
+    staleTime: 0, // Always refetch when media type changes
+  });
+
+  // Ensure positions is always an array
+  const positions = Array.isArray(positionsData) ? positionsData : [];
+
+  // Debug: Log positions when they change
+  useEffect(() => {
+    console.log("Positions state:", {
+      positions,
+      positionsData,
+      length: positions?.length,
+      dbMediaType,
+      selectedMediaType,
+      isLoadingPositions,
+      positionsError,
+      isArray: Array.isArray(positions)
+    });
+  }, [positions, positionsData, dbMediaType, selectedMediaType, isLoadingPositions, positionsError]);
+
   const { data: bookings, isLoading: bookingsLoading } = useQuery<Booking[]>({
     queryKey: ["/api/bookings"],
   });
-
-
 
   // Work Orders (requests raised by clients)
   const { data: workOrdersData = [], isLoading: woLoading } = useQuery<{ workOrder: any; items: any[] }[]>({
     queryKey: ["/api/work-orders"],
   });
 
-  const pendingWorkOrders = (workOrdersData || []).filter(w => w.workOrder.status === "draft");
+  // Sort pending work orders by creation date (newest first)
+  const pendingWorkOrders = useMemo(() => {
+    return (workOrdersData || [])
+      .filter(w => w.workOrder.status === "draft")
+      .sort((a, b) => {
+        const dateA = new Date(a.workOrder.createdAt).getTime();
+        const dateB = new Date(b.workOrder.createdAt).getTime();
+        return dateB - dateA; // Newest first
+      });
+  }, [workOrdersData]);
 
   // Email/WhatsApp pricing section removed per requirements
 
@@ -85,18 +192,6 @@ export default function ManagerDashboard() {
   ) || [];
   const rejectedBookings = bookings?.filter(b => b.status === "rejected") || [];
   const totalRevenue = bookings?.reduce((sum, b) => sum + parseFloat(b.totalAmount.toString()), 0) || 0;
-
-  const form = useForm<z.infer<typeof slotFormSchema>>({
-    resolver: zodResolver(slotFormSchema),
-    defaultValues: {
-      mediaType: "website",
-      pageType: "main",
-      position: "header",
-      dimensions: "728x90",
-      pricing: 0,
-      status: "available",
-    },
-  });
 
   const createSlotMutation = useMutation({
     mutationFn: async (data: z.infer<typeof slotFormSchema>) => {
@@ -169,6 +264,16 @@ export default function ManagerDashboard() {
                 Define a new advertising slot for your platform
               </DialogDescription>
             </DialogHeader>
+            {mediaTypesError && (
+              <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 text-sm rounded-md">
+                Using default media types. Database connection may be unavailable.
+              </div>
+            )}
+            {positionsError && (
+              <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 text-sm rounded-md">
+                Could not load positions. You can still enter a position manually.
+              </div>
+            )}
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -178,17 +283,29 @@ export default function ManagerDashboard() {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Media Type</FormLabel>
-                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <Select 
+                          onValueChange={(value) => {
+                            console.log("Media type changed to:", value);
+                            field.onChange(value);
+                            // Reset position when media type changes
+                            form.setValue("position", "");
+                          }} 
+                          value={field.value || undefined}
+                        >
                           <FormControl>
                             <SelectTrigger data-testid="select-media-type">
-                              <SelectValue />
+                              <SelectValue placeholder="Select media type" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            <SelectItem value="website">Website</SelectItem>
-                            <SelectItem value="mobile">Mobile App</SelectItem>
-                            <SelectItem value="email">Email</SelectItem>
-                            <SelectItem value="magazine">Magazine</SelectItem>
+                            {mediaTypes.map((mediaType) => {
+                              const enumValue = mapMediaTypeToEnum(mediaType);
+                              return (
+                                <SelectItem key={`${mediaType}-${enumValue}`} value={enumValue}>
+                                  {mediaType}
+                                </SelectItem>
+                              );
+                            })}
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -221,39 +338,47 @@ export default function ManagerDashboard() {
 
                 <FormField
                   control={form.control}
-                  name="pageType"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Position</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={field.value}>
-                        <FormControl>
-                          <SelectTrigger data-testid="select-page-type">
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="main">Main</SelectItem>
-                          <SelectItem value="course">Course</SelectItem>
-                          <SelectItem value="webinar">Webinar</SelectItem>
-                          <SelectItem value="student_login">Student Login</SelectItem>
-                          <SelectItem value="student_home">Student Home</SelectItem>
-                          <SelectItem value="other">Other</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
                   name="position"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Comment</FormLabel>
-                      <FormControl>
-                        <Textarea placeholder="Add comments or notes about this slot position..." {...field} data-testid="input-position" rows={3} />
-                      </FormControl>
+                      <FormLabel>Position</FormLabel>
+                      <Select 
+                        key={`position-select-${dbMediaType}-${positions.length}`}
+                        onValueChange={field.onChange} 
+                        value={field.value || ""}
+                        disabled={!selectedMediaType || isLoadingPositions}
+                      >
+                        <FormControl>
+                          <SelectTrigger data-testid="select-position">
+                            <SelectValue placeholder={
+                              isLoadingPositions 
+                                ? "Loading..." 
+                                : !selectedMediaType 
+                                  ? "Select media type first" 
+                                  : positions.length === 0 
+                                    ? "No positions available" 
+                                    : "Select position"
+                            } />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {isLoadingPositions ? (
+                            <SelectItem value="loading" disabled>Loading positions...</SelectItem>
+                          ) : positionsError ? (
+                            <SelectItem value="error" disabled>Error loading positions</SelectItem>
+                          ) : positions && Array.isArray(positions) && positions.length > 0 ? (
+                            positions.map((position, index) => (
+                              <SelectItem key={`${position}-${index}`} value={position}>
+                                {position}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="manual" disabled>
+                              {selectedMediaType ? `No positions found for ${dbMediaType}. Enter manually below.` : "Select media type first"}
+                            </SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -267,7 +392,7 @@ export default function ManagerDashboard() {
                       <FormItem>
                         <FormLabel>Dimensions</FormLabel>
                         <FormControl>
-                          <Input placeholder="e.g., 728x90" {...field} data-testid="input-dimensions" />
+                          <Input placeholder="e.g., 728x90" {...field} data-testid="input-dimensions" value={field.value || "728x90"} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -349,49 +474,106 @@ export default function ManagerDashboard() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Pending Work Orders</CardTitle>
-          <CardDescription>Requests raised by clients awaiting your quotation</CardDescription>
+      <Card className="border-2">
+        <CardHeader className="bg-gradient-to-r from-orange-50/50 to-background dark:from-orange-950/10 border-b">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-orange-100 dark:bg-orange-900/20 flex items-center justify-center">
+              <ClipboardCheck className="h-5 w-5 text-orange-600" />
+            </div>
+            <div>
+              <CardTitle className="text-xl">Pending Work Orders</CardTitle>
+              <CardDescription>Requests raised by clients awaiting your quotation</CardDescription>
+            </div>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           {woLoading ? (
             <div className="space-y-3">
               {[...Array(3)].map((_, i) => (
-                <Skeleton key={i} className="h-24 w-full" />
+                <Skeleton key={i} className="h-32 w-full rounded-lg" />
               ))}
             </div>
           ) : pendingWorkOrders.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No pending work orders</p>
+            <div className="text-center py-12">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+                  <FileText className="w-8 h-8 text-muted-foreground" />
+                </div>
+                <p className="text-base font-medium text-foreground">No pending work orders</p>
+                <p className="text-sm text-muted-foreground">All work orders have been processed</p>
+              </div>
+            </div>
           ) : (
             <div className="space-y-3">
-          {pendingWorkOrders.map(({ workOrder, items }) => (
-            <Card
-              key={workOrder.id}
-              className="hover-elevate cursor-pointer"
-              onClick={() => navigate(`/work-orders/${workOrder.customWorkOrderId || workOrder.id}`)}
-            >
-              <CardContent className="flex items-center justify-between gap-4 pt-6">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{workOrder.customWorkOrderId || `WO #${workOrder.id}`}</span>
-                        <Badge variant="secondary">Draft</Badge>
+              {pendingWorkOrders.map(({ workOrder, items }) => {
+                const workOrderId = workOrder.customWorkOrderId || `WO #${workOrder.id}`;
+                const createdAt = new Date(workOrder.createdAt);
+                const clientName = workOrder.businessSchoolName || workOrder.contactName || `Client #${workOrder.clientId}`;
+                const hasAmount = Number(workOrder.totalAmount) > 0 || workOrder.status === 'quoted';
+
+                return (
+                  <Card
+                    key={workOrder.id}
+                    className="border-2 hover:shadow-lg transition-all duration-200 cursor-pointer hover:border-primary/20 group"
+                    onClick={() => navigate(`/work-orders/${workOrder.customWorkOrderId || workOrder.id}`)}
+                  >
+                    <CardContent className="pt-6">
+                      <div className="flex flex-row items-start justify-between gap-4">
+                        <div className="flex-1 space-y-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+                              <FileText className="w-5 h-5 text-primary" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-lg">{workOrderId}</span>
+                                <Badge variant="secondary" className="bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400 border-orange-200 dark:border-orange-800">
+                                  Draft
+                                </Badge>
+                              </div>
+                              <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
+                                <Users className="w-3 h-3" />
+                                <span>{clientName}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm">
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <Package className="w-4 h-4" />
+                              <span>{items.length} item{items.length !== 1 ? "s" : ""}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <CalendarIcon className="w-4 h-4" />
+                              <span>{createdAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                              <span className="text-muted-foreground">•</span>
+                              <Clock className="w-3 h-3" />
+                              <span>{createdAt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right space-y-2">
+                          <div className="text-xs text-muted-foreground uppercase tracking-wide">Total Amount</div>
+                          {hasAmount ? (
+                            <div className="text-2xl font-bold text-primary">₹{Number(workOrder.totalAmount).toLocaleString()}</div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                Yet to be quoted
+                              </Badge>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-end gap-2 pt-2">
+                            <span className="text-sm text-muted-foreground flex items-center gap-2 group-hover:text-foreground transition-colors">
+                              View details
+                              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-sm text-muted-foreground mt-1">
-                        Items: {items.length}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm text-muted-foreground">Total</div>
-                      {Number(workOrder.totalAmount) > 0 || workOrder.status === 'quoted' ? (
-                        <div className="font-semibold">₹{Number(workOrder.totalAmount).toLocaleString()}</div>
-                      ) : (
-                        <div className="text-xs text-muted-foreground">Yet to be quoted</div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </CardContent>
@@ -399,35 +581,49 @@ export default function ManagerDashboard() {
 
       {/* Pricing controls removed as requested */}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Manual Slot Blocking</CardTitle>
-          <CardDescription>Reserve or block slots for internal needs</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+      <Card className="border-2">
+        <CardHeader className="bg-gradient-to-r from-red-50/50 to-background dark:from-red-950/10 border-b">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-red-100 dark:bg-red-900/20 flex items-center justify-center">
+              <Ban className="h-5 w-5 text-red-600" />
+            </div>
             <div>
-              <div className="text-xs text-muted-foreground mb-1">Media Type</div>
+              <CardTitle className="text-xl">Manual Slot Blocking</CardTitle>
+              <CardDescription>Reserve or block slots for internal needs</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-6 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Package className="w-4 h-4 text-muted-foreground" />
+                Media Type
+              </label>
               <Select value={blockForm.mediaType} onValueChange={(v) => {
                 setBlockForm({ ...blockForm, mediaType: v as any, pageType: v === "website" ? (blockForm.pageType || "main") : undefined, slotId: undefined });
               }}>
-                <SelectTrigger className="h-8">
-                  <SelectValue placeholder="Select media" />
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder="Select media type" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="website">Website</SelectItem>
                   <SelectItem value="mobile">Mobile App</SelectItem>
                   <SelectItem value="magazine">Magazine</SelectItem>
                   <SelectItem value="email">Email</SelectItem>
+                  <SelectItem value="whatsapp">Whatsapp</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             {blockForm.mediaType === "website" && (
-              <div>
-                <div className="text-xs text-muted-foreground mb-1">Page</div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                  Page Type
+                </label>
                 <Select value={blockForm.pageType} onValueChange={(v) => setBlockForm({ ...blockForm, pageType: v, slotId: undefined })}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="Select page" />
+                  <SelectTrigger className="h-11">
+                    <SelectValue placeholder="Select page type" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="main">Landing page</SelectItem>
@@ -440,35 +636,49 @@ export default function ManagerDashboard() {
                 </Select>
               </div>
             )}
-            <div className="md:col-span-2">
-              <div className="text-xs text-muted-foreground mb-1">Slot</div>
+            <div className={`space-y-2 ${blockForm.mediaType === "website" ? "lg:col-span-1" : "lg:col-span-2"}`}>
+              <label className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Package className="w-4 h-4 text-muted-foreground" />
+                Slot
+              </label>
               <Select
                 value={blockForm.slotId ? String(blockForm.slotId) : undefined}
                 onValueChange={(v) => setBlockForm({ ...blockForm, slotId: Number(v) })}
+                disabled={!blockForm.mediaType}
               >
-                <SelectTrigger className="h-8">
-                  <SelectValue placeholder="Select slot" />
+                <SelectTrigger className="h-11">
+                  <SelectValue placeholder={blockForm.mediaType ? "Select slot" : "Select media type first"} />
                 </SelectTrigger>
                 <SelectContent>
-                  {filteredSlots.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      {`${s.mediaType === "website" ? "Website" : humanize(s.mediaType)}${
-                        s.mediaType === "website" ? ` • ${humanize(s.pageType)}` : ""
-                      } • ${humanize(s.position)}`} • {s.dimensions} {s.slotId ? `(${s.slotId})` : `(#${s.id})`}
-                    </SelectItem>
-                  ))}
+                  {filteredSlots.length === 0 ? (
+                    <SelectItem value="none" disabled>No slots available</SelectItem>
+                  ) : (
+                    filteredSlots.map((s) => (
+                      <SelectItem key={s.id} value={String(s.id)}>
+                        {`${s.mediaType === "website" ? "Website" : humanize(s.mediaType)}${
+                          s.mediaType === "website" ? ` • ${humanize(s.pageType)}` : ""
+                        } • ${humanize(s.position)}`} • {s.dimensions} {s.slotId ? `(${s.slotId})` : `(#${s.id})`}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">Start</div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <CalendarIcon className="w-4 h-4 text-muted-foreground" />
+                Start Date
+              </label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Input
                     readOnly
                     value={blockStartDate ? new Date(blockStartDate).toLocaleDateString() : ""}
-                    placeholder="Select date"
-                    className="h-8 cursor-pointer"
+                    placeholder="Select start date"
+                    className="h-11 cursor-pointer"
                   />
                 </PopoverTrigger>
                 <PopoverContent align="start" className="p-0">
@@ -485,15 +695,18 @@ export default function ManagerDashboard() {
                 </PopoverContent>
               </Popover>
             </div>
-            <div>
-              <div className="text-xs text-muted-foreground mb-1">End</div>
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <CalendarIcon className="w-4 h-4 text-muted-foreground" />
+                End Date
+              </label>
               <Popover>
                 <PopoverTrigger asChild>
                   <Input
                     readOnly
                     value={blockEndDate ? new Date(blockEndDate).toLocaleDateString() : ""}
-                    placeholder="Select date"
-                    className="h-8 cursor-pointer"
+                    placeholder="Select end date"
+                    className="h-11 cursor-pointer"
                   />
                 </PopoverTrigger>
                 <PopoverContent align="start" className="p-0">
@@ -510,44 +723,76 @@ export default function ManagerDashboard() {
                 </PopoverContent>
               </Popover>
             </div>
-            <div className="md:col-span-6">
-              <Input placeholder="Reason" value={blockForm.reason || ""} onChange={(e) => setBlockForm({ ...blockForm, reason: e.target.value })} />
-            </div>
           </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={async () => {
-              if (!blockForm.slotId) { toast({ title: "Slot ID required", variant: "destructive" }); return; }
-              const selectedSlot = filteredSlots.find(s => s.id === blockForm.slotId);
-              const slotDisplayId = selectedSlot?.slotId || `#${blockForm.slotId}`;
-              try {
-                await fetch(`/api/slots/${blockForm.slotId}/unblock`, { method: "POST" }).then(r => r.ok ? r.json() : Promise.reject(r));
-                toast({ title: "Unblocked", description: `Slot ${slotDisplayId} is now available` });
-              } catch {
-                toast({ title: "Failed", description: "Could not unblock slot", variant: "destructive" });
-              }
-            }}>Unblock</Button>
-            <Button onClick={async () => {
-              if (!blockForm.slotId) { toast({ title: "Slot ID required", variant: "destructive" }); return; }
-              const selectedSlot = filteredSlots.find(s => s.id === blockForm.slotId);
-              const slotDisplayId = selectedSlot?.slotId || `#${blockForm.slotId}`;
-              try {
-                await fetch(`/api/slots/${blockForm.slotId}/block`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ reason: blockForm.reason, startDate: blockForm.start, endDate: blockForm.end }),
-                }).then(async (r) => {
-                  if (!r.ok) {
-                    let msg = "Failed to block";
-                    try { const j = await r.json(); msg = j?.error || msg; } catch {}
-                    throw new Error(msg);
-                  }
-                  return r.json();
-                });
-                toast({ title: "Blocked", description: `Slot ${slotDisplayId} blocked` });
-              } catch {
-                toast({ title: "Failed", description: "Cannot block this slot because it overlaps with a client work order.", variant: "destructive" });
-              }
-            }}>Block Slot</Button>
+
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 text-muted-foreground" />
+              Reason (Optional)
+            </label>
+            <Input 
+              placeholder="Enter reason for blocking this slot..." 
+              value={blockForm.reason || ""} 
+              onChange={(e) => setBlockForm({ ...blockForm, reason: e.target.value })}
+              className="h-11"
+            />
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2 border-t">
+            <Button 
+              variant="outline" 
+              onClick={async () => {
+                if (!blockForm.slotId) { toast({ title: "Slot ID required", variant: "destructive" }); return; }
+                const selectedSlot = filteredSlots.find(s => s.id === blockForm.slotId);
+                const slotDisplayId = selectedSlot?.slotId || `#${blockForm.slotId}`;
+                try {
+                  await fetch(`/api/slots/${blockForm.slotId}/unblock`, { method: "POST" }).then(r => r.ok ? r.json() : Promise.reject(r));
+                  toast({ title: "Unblocked", description: `Slot ${slotDisplayId} is now available` });
+                  setBlockForm({});
+                  setBlockStartDate(null);
+                  setBlockEndDate(null);
+                } catch {
+                  toast({ title: "Failed", description: "Could not unblock slot", variant: "destructive" });
+                }
+              }}
+              disabled={!blockForm.slotId}
+              className="gap-2"
+            >
+              <Unlock className="w-4 h-4" />
+              Unblock Slot
+            </Button>
+            <Button 
+              onClick={async () => {
+                if (!blockForm.slotId) { toast({ title: "Slot ID required", variant: "destructive" }); return; }
+                const selectedSlot = filteredSlots.find(s => s.id === blockForm.slotId);
+                const slotDisplayId = selectedSlot?.slotId || `#${blockForm.slotId}`;
+                try {
+                  await fetch(`/api/slots/${blockForm.slotId}/block`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ reason: blockForm.reason, startDate: blockForm.start, endDate: blockForm.end }),
+                  }).then(async (r) => {
+                    if (!r.ok) {
+                      let msg = "Failed to block";
+                      try { const j = await r.json(); msg = j?.error || msg; } catch {}
+                      throw new Error(msg);
+                    }
+                    return r.json();
+                  });
+                  toast({ title: "Blocked", description: `Slot ${slotDisplayId} blocked` });
+                  setBlockForm({});
+                  setBlockStartDate(null);
+                  setBlockEndDate(null);
+                } catch {
+                  toast({ title: "Failed", description: "Cannot block this slot because it overlaps with a client work order.", variant: "destructive" });
+                }
+              }}
+              disabled={!blockForm.slotId}
+              className="gap-2 bg-red-600 hover:bg-red-700 text-white"
+            >
+              <Lock className="w-4 h-4" />
+              Block Slot
+            </Button>
           </div>
         </CardContent>
       </Card>

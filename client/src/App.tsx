@@ -9,6 +9,16 @@ import { ThemeProvider } from "@/lib/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notification-bell";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { LogOut, ChevronDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import ClientDashboard from "@/pages/client-dashboard";
@@ -19,6 +29,9 @@ import VPDashboard from "@/pages/vp-dashboard";
 import PVSirDashboard from "@/pages/pv-sir-dashboard";
 import AccountsDashboard from "@/pages/accounts-dashboard";
 import ITDashboard from "@/pages/it-dashboard";
+import MaterialDashboard from "@/pages/material-dashboard";
+import MaterialPending from "@/pages/material-pending";
+import MaterialDeployed from "@/pages/material-deployed";
 import AdminDashboard from "@/pages/admin-dashboard";
 import SettingsPage from "@/pages/settings";
 import ReleaseOrdersPage from "@/pages/release-orders";
@@ -78,6 +91,8 @@ function RoleBasedDashboard() {
       return <AccountsDashboard />;
     case "it":
       return <ITDashboard />;
+    case "material":
+      return <MaterialDashboard />;
     default:
       return <ClientDashboard />;
   }
@@ -226,6 +241,12 @@ function Router() {
       <Route path="/deployments">
         <ProtectedRoute component={ITDeploymentsPage} />
       </Route>
+      <Route path="/material-pending">
+        <ProtectedRoute component={MaterialPending} />
+      </Route>
+      <Route path="/material-deployed">
+        <ProtectedRoute component={MaterialDeployed} />
+      </Route>
       <Route path="/">
         <ProtectedRoute component={RoleBasedDashboard} />
       </Route>
@@ -235,7 +256,7 @@ function Router() {
 }
 
 function AppContent() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, logout } = useAuth();
   const sidebarStyle = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "4rem",
@@ -250,19 +271,53 @@ function AppContent() {
       <div className="flex h-screen w-full">
         <AppSidebar />
         <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between gap-4 p-4 border-b">
+          <header className="flex items-center justify-between gap-4 px-6 py-4 border-b bg-background/95 backdrop-blur-sm shadow-sm">
             <div className="flex items-center gap-4">
-              <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <div>
-                <h2 className="font-semibold" data-testid="text-user-name">{user?.name}</h2>
-                <p className="text-sm text-muted-foreground" data-testid="text-user-role">
-                  {user?.role.replace("_", " ").toUpperCase()}
-                </p>
+              <SidebarTrigger data-testid="button-sidebar-toggle" className="hover:bg-muted/80 transition-colors" />
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center border-2 border-primary/20">
+                  <span className="text-primary font-bold text-sm">
+                    {user?.name?.charAt(0).toUpperCase() || "U"}
+                  </span>
+                </div>
+                <div>
+                  <h2 className="font-bold text-base" data-testid="text-user-name">{user?.name}</h2>
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide" data-testid="text-user-role">
+                    {user?.role.replace("_", " ")}
+                  </p>
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <NotificationBell />
               <ThemeToggle />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="flex items-center gap-2 h-auto px-2 py-1.5 hover:bg-muted/80">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
+                      <span className="text-primary font-bold text-xs">
+                        {user?.name?.charAt(0).toUpperCase() || "U"}
+                      </span>
+                    </div>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>
+                    <div className="flex flex-col space-y-1">
+                      <p className="text-sm font-medium leading-none">{user?.name}</p>
+                      <p className="text-xs leading-none text-muted-foreground">
+                        {user?.email || user?.role.replace("_", " ").toUpperCase()}
+                      </p>
+                    </div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={logout} className="cursor-pointer text-red-600 focus:text-red-600 focus:bg-red-50 dark:focus:bg-red-950">
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Logout</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </header>
           <main className="flex-1 overflow-auto p-6">

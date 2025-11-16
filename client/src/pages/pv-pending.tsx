@@ -155,7 +155,12 @@ const renderReleaseOrders = (rows: ReleaseOrderEntry[], onViewDetails: (entry: R
               size="sm"
               onClick={(e) => {
                 e.stopPropagation();
-                if (approveMutation) approveMutation.mutate(entry.releaseOrder.id);
+                if (approveMutation) {
+                  const hasMagazine = entry.items.some((item: any) => 
+                    !item.addonType && item.slot?.mediaType === "magazine"
+                  );
+                  approveMutation.mutate({ releaseOrderId: entry.releaseOrder.id, hasMagazine });
+                }
               }}
               disabled={approveMutation?.isPending}
             >
@@ -194,7 +199,7 @@ export default function PVPendingPage() {
   });
 
   const approveMutation = useMutation({
-    mutationFn: async (releaseOrderId: number) => {
+    mutationFn: async ({ releaseOrderId, hasMagazine }: { releaseOrderId: number; hasMagazine: boolean }) => {
       const res = await fetch(`/api/release-orders/${releaseOrderId}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -203,10 +208,13 @@ export default function PVPendingPage() {
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "pending_pv_review" }] });
       queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "accepted" }] });
-      toast({ title: "Release Order accepted", description: "Accounts and IT have been notified." });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "ready_for_it" }] });
+      queryClient.invalidateQueries({ queryKey: ["/api/release-orders", { status: "ready_for_material" }] });
+      const teamName = variables.hasMagazine ? "Material" : "IT";
+      toast({ title: "Release Order accepted", description: `Accounts and ${teamName} have been notified.` });
     },
     onError: (error: any) => {
       toast({

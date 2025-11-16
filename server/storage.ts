@@ -18,9 +18,10 @@ import {
   releaseOrders, type ReleaseOrder, type InsertReleaseOrder,
   releaseOrderItems, type ReleaseOrderItem, type InsertReleaseOrderItem,
   activityLogs, type ActivityLog, type InsertActivityLog,
-  deployments, type Deployment, type InsertDeployment
+  deployments, type Deployment, type InsertDeployment,
+  roDetails, type RoDetails
 } from "@shared/schema";
-import { eq, and, desc, sql, like, or } from "drizzle-orm";
+import { eq, and, desc, sql, like, or, distinct } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -118,6 +119,10 @@ export interface IStorage {
   getDeployment(id: number): Promise<Deployment | undefined>;
   getDeployments(filters?: { releaseOrderId?: number; workOrderItemId?: number; status?: string }): Promise<Deployment[]>;
   updateDeployment(id: number, deployment: Partial<InsertDeployment>): Promise<Deployment | undefined>;
+  
+  // RO Details
+  getMediaTypes(): Promise<string[]>;
+  getPositionsByMediaType(mediaType: string): Promise<string[]>;
 }
 
 export class DbStorage implements IStorage {
@@ -928,6 +933,20 @@ export class DbStorage implements IStorage {
   async updateDeployment(id: number, deployment: Partial<InsertDeployment>): Promise<Deployment | undefined> {
     const result = await db.update(deployments).set(deployment).where(eq(deployments.id, id)).returning();
     return result[0];
+  }
+
+  // RO Details
+  async getMediaTypes(): Promise<string[]> {
+    const result = await db.select({ mediaType: roDetails.mediaType }).from(roDetails);
+    const uniqueMediaTypes = [...new Set(result.map(r => r.mediaType).filter(Boolean))];
+    return uniqueMediaTypes;
+  }
+
+  async getPositionsByMediaType(mediaType: string): Promise<string[]> {
+    const result = await db.select({ position: roDetails.position })
+      .from(roDetails)
+      .where(eq(roDetails.mediaType, mediaType));
+    return result.map(r => r.position).filter(Boolean);
   }
 }
 

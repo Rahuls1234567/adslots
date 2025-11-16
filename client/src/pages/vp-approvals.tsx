@@ -130,8 +130,15 @@ const renderReleaseOrders = (rows: ReleaseOrderEntry[], onViewDetails: (entry: R
         >
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-lg">Release Order #{entry.releaseOrder.id}</CardTitle>
-              <CardDescription>WO #{entry.releaseOrder.workOrderId} • {formatCurrency(entry.workOrder?.totalAmount)}</CardDescription>
+              <CardTitle className="text-lg">Release Order {entry.releaseOrder.customRoNumber || `#${entry.releaseOrder.id}`}</CardTitle>
+              <CardDescription>
+                <div className="text-sm font-medium text-foreground">
+                  Work Order: {entry.releaseOrder.workOrder?.customWorkOrderId || `WO #${entry.releaseOrder.workOrderId}`}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {formatCurrency(entry.workOrder?.totalAmount)}
+                </div>
+              </CardDescription>
             </div>
             <Badge variant="secondary" className="capitalize">{humanize(entry.releaseOrder.status)}</Badge>
           </CardHeader>
@@ -153,19 +160,30 @@ export default function VPApprovalsPage() {
     queryKey: ["/api/release-orders", { status: "pending_pv_review" }],
   });
 
-  // 2. Orders that have been fully accepted (accepted)
+  // 2. Orders fully approved by PV Sir (ready_for_it, ready_for_material, accepted)
+  const { data: readyForIt = [], isLoading: loadingReadyForIt } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_it" }],
+  });
+  const { data: readyForMaterial = [], isLoading: loadingReadyForMaterial } = useQuery<ReleaseOrderEntry[]>({
+    queryKey: ["/api/release-orders", { status: "ready_for_material" }],
+  });
   const { data: accepted = [], isLoading: loadingAccepted } = useQuery<ReleaseOrderEntry[]>({
     queryKey: ["/api/release-orders", { status: "accepted" }],
   });
 
-  // Combine all approved orders
-  const allApproved = useMemo(() => {
-    return [...pendingPVReview, ...accepted];
-  }, [pendingPVReview, accepted]);
+  // Combine all fully approved orders (approved by PV Sir)
+  const allFullyApproved = useMemo(() => {
+    return [...readyForIt, ...readyForMaterial, ...accepted];
+  }, [readyForIt, readyForMaterial, accepted]);
 
-  const isLoading = loadingPendingPV || loadingAccepted;
+  // Combine all approved orders (both pending PV review and fully approved)
+  const allApproved = useMemo(() => {
+    return [...pendingPVReview, ...allFullyApproved];
+  }, [pendingPVReview, allFullyApproved]);
+
+  const isLoading = loadingPendingPV || loadingAccepted || loadingReadyForIt || loadingReadyForMaterial;
   const pendingCount = pendingPVReview.length;
-  const acceptedCount = accepted.length;
+  const fullyApprovedCount = allFullyApproved.length;
   const totalCount = allApproved.length;
 
   return (
@@ -184,7 +202,7 @@ export default function VPApprovalsPage() {
             Pending PV Review ({pendingCount})
           </TabsTrigger>
           <TabsTrigger value="accepted">
-            Accepted ({acceptedCount})
+            Fully Approved ({fullyApprovedCount})
           </TabsTrigger>
         </TabsList>
 
@@ -220,7 +238,7 @@ export default function VPApprovalsPage() {
               ))}
             </div>
           ) : (
-            renderReleaseOrders(accepted, setSelectedEntry)
+            renderReleaseOrders(allFullyApproved, setSelectedEntry)
           )}
         </TabsContent>
       </Tabs>

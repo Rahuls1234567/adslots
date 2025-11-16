@@ -416,6 +416,19 @@ import { type Slot } from "@shared/schema";
 import { Monitor, Mail, MessageCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+
+// Helper function to map enum value to database media type
+const mapEnumToMediaType = (enumValue: string): string => {
+  const mapping: Record<string, string> = {
+    "website": "Website",
+    "mobile": "Mobile APP",
+    "email": "Email",
+    "magazine": "Magazine",
+    "whatsapp": "Whatsapp",
+  };
+  return mapping[enumValue] || enumValue;
+};
 
 const PAGE_LABELS: Record<string, string> = {
   main: "Landing page",
@@ -432,7 +445,7 @@ export default function ClientDashboard() {
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [selectedMedia, setSelectedMedia] = useState<"website" | "mobile" | "magazine" | "email" | "whatsapp">("website");
-  const [selectedPage, setSelectedPage] = useState<string>("all");
+  const [selectedPosition, setSelectedPosition] = useState<string>("all");
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [selectedSlotIds, setSelectedSlotIds] = useState<number[]>([]);
@@ -440,12 +453,34 @@ export default function ClientDashboard() {
   const [includeEmail, setIncludeEmail] = useState(false);
   const [includeWhatsApp, setIncludeWhatsApp] = useState(false);
 
-  // Fetch available slots based on selected dates and page
+  // Get database media type for API calls
+  const dbMediaType = mapEnumToMediaType(selectedMedia);
+
+  // Fetch positions from database based on selected media type
+  const { data: positionsData, isLoading: isLoadingPositions } = useQuery<string[]>({
+    queryKey: ["/api/positions", dbMediaType],
+    queryFn: async () => {
+      try {
+        const response = await apiRequest("GET", `/api/positions?mediaType=${encodeURIComponent(dbMediaType)}`);
+        const result = await response.json();
+        return Array.isArray(result) ? result : [];
+      } catch (error) {
+        console.error("Error fetching positions:", error);
+        return [];
+      }
+    },
+    enabled: selectedMedia !== "email", // Don't fetch for email
+    retry: 1,
+    staleTime: 0,
+  });
+
+  const positions = Array.isArray(positionsData) ? positionsData : [];
+
+  // Fetch available slots based on selected dates and position
   const { data: availableSlots, isLoading } = useQuery<any[]>({
     queryKey: ["/api/slots/availability", { 
       startDate: startDate?.toISOString().split("T")[0],
       endDate: endDate?.toISOString().split("T")[0],
-      pageType: selectedMedia === "website" && selectedPage !== "all" ? selectedPage : undefined,
       mediaType: selectedMedia,
     }],
     enabled: !!startDate && !!endDate,
@@ -496,44 +531,39 @@ export default function ClientDashboard() {
     setInfoOpen(true);
   };
 
-  // Filter slots by selected media type
+  // Filter slots by selected media type and position
   const filteredSlots =
     availableSlots?.filter((slot) => {
       if (slot.mediaType !== selectedMedia) return false;
-      if (selectedMedia === "website" && selectedPage !== "all") {
-        return slot.pageType === selectedPage;
-      }
+      if (selectedPosition !== "all" && slot.position !== selectedPosition) return false;
       return true;
     }) || [];
 
-  const pageTypes = [
-    { value: "all", label: "All pages" },
-    { value: "main", label: "Landing page" },
-    { value: "student_home", label: "Student home page" },
-    { value: "student_login", label: "Login page" },
-    { value: "aimcat_results_analysis", label: "AIMCAT results and analysis page" },
-    { value: "chat_pages", label: "Chat pages" },
-  ];
+  // Reset position when media type changes
+  const handleMediaChange = (media: "website" | "mobile" | "magazine" | "email" | "whatsapp") => {
+    setSelectedMedia(media);
+    setSelectedPosition("all"); // Reset position filter when media type changes
+  };
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b bg-muted/30">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div>
-              <h1 className="text-2xl font-bold" data-testid="text-dashboard-title">
+    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted/20">
+      <div className="border-b bg-background/80 backdrop-blur-sm shadow-sm flex-shrink-0">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-6 md:p-8">
+          <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-1">
+              <h1 className="text-3xl font-bold tracking-tight" data-testid="text-dashboard-title">
                 Welcome, {user?.name}
               </h1>
-              <p className="text-sm text-muted-foreground mt-1">
-                Select your ad campaign dates
+              <p className="text-muted-foreground">
+                Select your ad campaign dates and choose advertising slots
               </p>
             </div>
-            <div className="grid gap-3 md:grid-cols-2 md:items-end">
-              <div>
-                <label className="text-sm font-medium">From Date</label>
+            <div className="flex flex-col gap-4 sm:flex-row">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-foreground">From Date</label>
                 <input
                   type="date"
-                  className="mt-1 w-full rounded-md border bg-background p-2 text-sm"
+                  className="h-10 w-full rounded-lg border border-input bg-background px-4 py-2 text-sm ring-offset-background transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   value={startDate ? startDate.toISOString().split("T")[0] : ""}
                   onChange={(e) => {
                     const newStart = e.target.value ? new Date(e.target.value) : null;
@@ -541,11 +571,11 @@ export default function ClientDashboard() {
                   }}
                 />
               </div>
-              <div>
-                <label className="text-sm font-medium">To Date</label>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-foreground">To Date</label>
                 <input
                   type="date"
-                  className="mt-1 w-full rounded-md border bg-background p-2 text-sm"
+                  className="h-10 w-full rounded-lg border border-input bg-background px-4 py-2 text-sm ring-offset-background transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   value={endDate ? endDate.toISOString().split("T")[0] : ""}
                   onChange={(e) => {
                     const newEnd = e.target.value ? new Date(e.target.value) : null;
@@ -557,21 +587,21 @@ export default function ClientDashboard() {
           </div>
 
           {startDate && endDate && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">Selected Period</CardTitle>
+            <Card className="border-2 shadow-md">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold">Campaign Period Summary</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex flex-wrap items-center gap-6 text-sm">
-                  <div>
-                    <div className="text-muted-foreground">Duration</div>
-                    <div className="font-medium">
+                <div className="flex flex-wrap items-center gap-8 text-sm">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Duration</div>
+                    <div className="text-2xl font-bold text-foreground">
                       {Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))} days
                     </div>
                   </div>
-                  <div>
-                    <div className="text-muted-foreground">Slots available</div>
-                    <div className="font-medium text-primary">
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Available Slots</div>
+                    <div className="text-2xl font-bold text-primary">
                       {filteredSlots.length}
                     </div>
                   </div>
@@ -582,64 +612,147 @@ export default function ClientDashboard() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-6 md:p-8">
-          <Card>
-          <CardHeader>
+      <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 p-6 md:p-8 pb-24">
+          <Card className="shadow-lg border-2">
+          <CardHeader className="pb-4">
             <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-xl">Select Slots</CardTitle>
-                <CardDescription className="mt-1">
-                  Choose your advertising slots for the selected dates
+              <div className="space-y-1">
+                <CardTitle className="text-2xl font-bold">Select Advertising Slots</CardTitle>
+                <CardDescription className="text-base">
+                  Choose your advertising slots for the selected campaign period
                 </CardDescription>
               </div>
-              <Monitor className="w-6 h-6 text-muted-foreground" />
+              <div className="hidden sm:flex items-center justify-center w-12 h-12 rounded-full bg-primary/10">
+                <Monitor className="w-6 h-6 text-primary" />
+              </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
-            <Tabs value={selectedMedia} onValueChange={(v) => setSelectedMedia(v as any)}>
-              <TabsList>
-                <TabsTrigger value="website">Website</TabsTrigger>
-                <TabsTrigger value="mobile">Mobile App</TabsTrigger>
-                <TabsTrigger value="magazine">Magazine</TabsTrigger>
-                <TabsTrigger value="email">Email</TabsTrigger>
-                <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
-              </TabsList>
+            {/* Media Type Selector - Enhanced Segmented Control */}
+            <div className="flex flex-col gap-3">
+              <label className="text-sm font-semibold text-foreground">Media Type</label>
+              <div className="inline-flex items-center gap-1.5 rounded-xl bg-muted/60 p-1.5 shadow-inner">
+                <button
+                  onClick={() => handleMediaChange("website")}
+                  className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                    selectedMedia === "website"
+                      ? "bg-background text-foreground shadow-md scale-105"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  Website
+                </button>
+                <button
+                  onClick={() => handleMediaChange("whatsapp")}
+                  className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                    selectedMedia === "whatsapp"
+                      ? "bg-background text-foreground shadow-md scale-105"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  WhatsApp
+                </button>
+                <button
+                  onClick={() => handleMediaChange("mobile")}
+                  className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                    selectedMedia === "mobile"
+                      ? "bg-background text-foreground shadow-md scale-105"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  Mobile App
+                </button>
+                <button
+                  onClick={() => handleMediaChange("magazine")}
+                  className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                    selectedMedia === "magazine"
+                      ? "bg-background text-foreground shadow-md scale-105"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  Magazine
+                </button>
+                <button
+                  onClick={() => handleMediaChange("email")}
+                  className={`px-5 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                    selectedMedia === "email"
+                      ? "bg-background text-foreground shadow-md scale-105"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  Email
+                </button>
+              </div>
+            </div>
 
-              {/* Website slots */}
-              <TabsContent value="website" className="space-y-4">
-                <div className="flex items-center gap-4">
-                  <span className="text-sm font-medium">Page</span>
-                  <Select value={selectedPage} onValueChange={setSelectedPage}>
-                    <SelectTrigger className="w-64" data-testid="select-page-type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {pageTypes.map((page) => (
-                        <SelectItem key={page.value} value={page.value}>
-                          {page.label}
+            {/* Position dropdown - visible for all media types except email */}
+            {(selectedMedia === "website" || selectedMedia === "mobile" || selectedMedia === "magazine" || selectedMedia === "whatsapp") && (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+                <label className="text-sm font-semibold text-foreground min-w-[80px]">Position</label>
+                <Select 
+                  value={selectedPosition} 
+                  onValueChange={setSelectedPosition}
+                  disabled={isLoadingPositions || positions.length === 0}
+                >
+                  <SelectTrigger className="w-full sm:w-80 h-11" data-testid="select-position">
+                    <SelectValue placeholder={
+                      isLoadingPositions 
+                        ? "Loading positions..." 
+                        : positions.length === 0 
+                          ? "No positions available" 
+                          : "All positions"
+                    } />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All positions</SelectItem>
+                    {isLoadingPositions ? (
+                      <SelectItem value="loading" disabled>Loading positions...</SelectItem>
+                    ) : positions.length > 0 ? (
+                      positions.map((position) => (
+                        <SelectItem key={position} value={position}>
+                          {position}
                         </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                      ))
+                    ) : (
+                      <SelectItem value="none" disabled>No positions available</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
+            {/* Content based on selected media */}
+            {selectedMedia === "website" && (
+              <div className="space-y-4">
                 {!startDate || !endDate ? (
-                  <div className="text-center py-16 bg-muted/30 rounded-lg border-2 border-dashed">
-                    <p className="text-muted-foreground">Please select start and end dates to view available slots</p>
+                  <div className="text-center py-20 bg-gradient-to-br from-muted/50 to-muted/30 rounded-xl border-2 border-dashed">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                        <Monitor className="w-8 h-8 text-primary" />
+                      </div>
+                      <p className="text-base font-medium text-foreground">Select Campaign Dates</p>
+                      <p className="text-sm text-muted-foreground max-w-md">Please select start and end dates above to view available advertising slots</p>
+                    </div>
                   </div>
                 ) : isLoading ? (
-                  <div className="grid grid-cols-6 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
                     {[...Array(12)].map((_, i) => (
-                      <Skeleton key={i} className="h-24 w-full" />
+                      <Skeleton key={i} className="h-28 w-full rounded-lg" />
                     ))}
                   </div>
                 ) : filteredSlots.length === 0 ? (
-                  <div className="text-center py-16 bg-muted/30 rounded-lg border-2 border-dashed">
-                    <p className="text-muted-foreground">No slots available for the selected page and dates</p>
+                  <div className="text-center py-20 bg-gradient-to-br from-muted/50 to-muted/30 rounded-xl border-2 border-dashed">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+                        <Monitor className="w-8 h-8 text-muted-foreground" />
+                      </div>
+                      <p className="text-base font-medium text-foreground">No Slots Available</p>
+                      <p className="text-sm text-muted-foreground max-w-md">No slots found for the selected position and dates. Try adjusting your filters or date range.</p>
+                    </div>
                   </div>
                 ) : (
-                  <div className="bg-card rounded-lg border p-6">
+                  <div className="bg-card rounded-xl border-2 p-6 shadow-sm">
                     <SlotGrid
                       slots={filteredSlots}
                       selectedSlots={selectedSlotIds}
@@ -650,26 +763,39 @@ export default function ClientDashboard() {
                     />
                   </div>
                 )}
-              </TabsContent>
+              </div>
+            )}
 
-              {/* Mobile slots */}
-              <TabsContent value="mobile">
+            {selectedMedia === "mobile" && (
+              <div>
                 {!startDate || !endDate ? (
-                  <div className="text-center py-16 bg-muted/30 rounded-lg border-2 border-dashed">
-                    <p className="text-muted-foreground">Please select dates to view mobile slots</p>
+                  <div className="text-center py-20 bg-gradient-to-br from-muted/50 to-muted/30 rounded-xl border-2 border-dashed">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                        <Monitor className="w-8 h-8 text-primary" />
+                      </div>
+                      <p className="text-base font-medium text-foreground">Select Campaign Dates</p>
+                      <p className="text-sm text-muted-foreground max-w-md">Please select start and end dates above to view available mobile app slots</p>
+                    </div>
                   </div>
                 ) : isLoading ? (
-                  <div className="grid grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                     {[...Array(8)].map((_, i) => (
-                      <Skeleton key={i} className="h-28 w-full" />
+                      <Skeleton key={i} className="h-32 w-full rounded-lg" />
                     ))}
                   </div>
                 ) : filteredSlots.length === 0 ? (
-                  <div className="text-center py-16 bg-muted/30 rounded-lg border-2 border-dashed">
-                    <p className="text-muted-foreground">No mobile slots available for the selected dates</p>
+                  <div className="text-center py-20 bg-gradient-to-br from-muted/50 to-muted/30 rounded-xl border-2 border-dashed">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+                        <Monitor className="w-8 h-8 text-muted-foreground" />
+                      </div>
+                      <p className="text-base font-medium text-foreground">No Mobile Slots Available</p>
+                      <p className="text-sm text-muted-foreground max-w-md">No mobile app slots found for the selected position and dates.</p>
+                    </div>
                   </div>
                 ) : (
-                  <div className="bg-card rounded-lg border p-6">
+                  <div className="bg-card rounded-xl border-2 p-6 shadow-sm">
                     <SlotGrid
                       slots={filteredSlots}
                       selectedSlots={selectedSlotIds}
@@ -680,26 +806,39 @@ export default function ClientDashboard() {
                     />
                   </div>
                 )}
-              </TabsContent>
+              </div>
+            )}
 
-              {/* Magazine */}
-              <TabsContent value="magazine">
+            {selectedMedia === "magazine" && (
+              <div>
                 {!startDate || !endDate ? (
-                  <div className="text-center py-16 bg-muted/30 rounded-lg border-2 border-dashed">
-                    <p className="text-muted-foreground">Please select dates to view magazine slots</p>
+                  <div className="text-center py-20 bg-gradient-to-br from-muted/50 to-muted/30 rounded-xl border-2 border-dashed">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                        <Monitor className="w-8 h-8 text-primary" />
+                      </div>
+                      <p className="text-base font-medium text-foreground">Select Campaign Dates</p>
+                      <p className="text-sm text-muted-foreground max-w-md">Please select start and end dates above to view available magazine slots</p>
+                    </div>
                   </div>
                 ) : isLoading ? (
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {[...Array(4)].map((_, i) => (
-                      <Skeleton key={i} className="h-40 w-full" />
+                      <Skeleton key={i} className="h-48 w-full rounded-lg" />
                     ))}
                   </div>
                 ) : filteredSlots.length === 0 ? (
-                  <div className="text-center py-16 bg-muted/30 rounded-lg border-2 border-dashed">
-                    <p className="text-muted-foreground">No magazine slots available</p>
+                  <div className="text-center py-20 bg-gradient-to-br from-muted/50 to-muted/30 rounded-xl border-2 border-dashed">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+                        <Monitor className="w-8 h-8 text-muted-foreground" />
+                      </div>
+                      <p className="text-base font-medium text-foreground">No Magazine Slots Available</p>
+                      <p className="text-sm text-muted-foreground max-w-md">No magazine slots found for the selected position and dates.</p>
+                    </div>
                   </div>
                 ) : (
-                  <div className="bg-card rounded-lg border p-6">
+                  <div className="bg-card rounded-xl border-2 p-6 shadow-sm">
                     <SlotGrid
                       slots={filteredSlots}
                       selectedSlots={selectedSlotIds}
@@ -710,52 +849,80 @@ export default function ClientDashboard() {
                     />
                   </div>
                 )}
-              </TabsContent>
+              </div>
+            )}
 
-              {/* Email */}
-              <TabsContent value="email">
-                <div className="bg-card rounded-lg border p-6 flex items-center justify-between">
-                  <div className="text-left">
-                    <div className="flex items-center gap-2">
-                      <Mail className="h-5 w-5 text-muted-foreground" />
-                      <h3 className="font-semibold">Email Campaign</h3>
+            {selectedMedia === "email" && (
+              <div className="bg-gradient-to-br from-card to-muted/30 rounded-xl border-2 p-8 shadow-sm">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <Mail className="h-5 w-5 text-primary" />
+                      </div>
+                      <h3 className="text-lg font-bold">Email Campaign</h3>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Treat Email like a slot. Select it to include this channel for your chosen period.
+                    <p className="text-sm text-muted-foreground max-w-md">
+                      Treat Email like a slot. Select it to include this channel for your chosen campaign period.
                     </p>
                   </div>
                   <button
-                    className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${includeEmail ? 'bg-primary text-white border-primary' : 'bg-transparent text-primary border-primary hover:bg-primary/10'}`}
+                    className={`px-6 py-3 rounded-lg text-sm font-semibold border-2 transition-all duration-200 shadow-sm ${
+                      includeEmail 
+                        ? 'bg-primary text-primary-foreground border-primary shadow-md hover:bg-primary/90' 
+                        : 'bg-transparent text-primary border-primary hover:bg-primary/10 hover:shadow-md'
+                    }`}
                     onClick={() => setIncludeEmail(v => !v)}
                     data-testid="button-toggle-email"
                   >
-                    {includeEmail ? 'Selected' : 'Select Email'}
+                    {includeEmail ? '✓ Selected' : 'Select Email'}
                   </button>
                 </div>
-              </TabsContent>
+              </div>
+            )}
 
-              {/* WhatsApp */}
-              <TabsContent value="whatsapp">
-                <div className="bg-card rounded-lg border p-6 flex items-center justify-between">
-                  <div className="text-left">
-                    <div className="flex items-center gap-2">
-                      <MessageCircle className="h-5 w-5 text-muted-foreground" />
-                      <h3 className="font-semibold">WhatsApp Campaign</h3>
+            {selectedMedia === "whatsapp" && (
+              <div>
+                {!startDate || !endDate ? (
+                  <div className="text-center py-20 bg-gradient-to-br from-muted/50 to-muted/30 rounded-xl border-2 border-dashed">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                        <MessageCircle className="w-8 h-8 text-primary" />
+                      </div>
+                      <p className="text-base font-medium text-foreground">Select Campaign Dates</p>
+                      <p className="text-sm text-muted-foreground max-w-md">Please select start and end dates above to view available WhatsApp slots</p>
                     </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Treat WhatsApp like a slot. Select it to include this channel for your chosen period.
-                    </p>
                   </div>
-                  <button
-                    className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${includeWhatsApp ? 'bg-primary text-white border-primary' : 'bg-transparent text-primary border-primary hover:bg-primary/10'}`}
-                    onClick={() => setIncludeWhatsApp(v => !v)}
-                    data-testid="button-toggle-whatsapp"
-                  >
-                    {includeWhatsApp ? 'Selected' : 'Select WhatsApp'}
-                  </button>
-                </div>
-              </TabsContent>
-            </Tabs>
+                ) : isLoading ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                    {[...Array(8)].map((_, i) => (
+                      <Skeleton key={i} className="h-32 w-full rounded-lg" />
+                    ))}
+                  </div>
+                ) : filteredSlots.length === 0 ? (
+                  <div className="text-center py-20 bg-gradient-to-br from-muted/50 to-muted/30 rounded-xl border-2 border-dashed">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center">
+                        <MessageCircle className="w-8 h-8 text-muted-foreground" />
+                      </div>
+                      <p className="text-base font-medium text-foreground">No WhatsApp Slots Available</p>
+                      <p className="text-sm text-muted-foreground max-w-md">No WhatsApp slots found for the selected position and dates.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-card rounded-xl border-2 p-6 shadow-sm">
+                    <SlotGrid
+                      slots={filteredSlots}
+                      selectedSlots={selectedSlotIds}
+                      onSlotSelect={toggleSelectSlot}
+                      onSlotInfo={openInfo}
+                      selectable
+                      mediaType="whatsapp"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
           </Card>
         </div>
@@ -794,14 +961,28 @@ export default function ClientDashboard() {
       </Dialog>
 
       {(selectedSlotIds.length > 0 || includeEmail || includeWhatsApp || requestRaised) && (
-        <div className="fixed bottom-0 left-0 right-0 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="mx-auto flex max-w-screen-xl items-center justify-between gap-4 px-6 py-3">
-            <div className="text-sm text-muted-foreground">
-              Selected: <span className="font-medium text-foreground">{selectedSlotIds.length}</span> slots
-              {includeEmail && <span className="ml-2">• Email</span>}
-              {includeWhatsApp && <span className="ml-2">• WhatsApp</span>}
+        <div className="fixed bottom-0 left-0 right-0 border-t-2 bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/80 shadow-2xl z-50">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-6 py-4">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Selected:</span>
+                <span className="font-bold text-foreground text-base">{selectedSlotIds.length}</span>
+                <span className="text-muted-foreground">slots</span>
+                {includeEmail && (
+                  <span className="ml-3 px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-semibold">
+                    Email
+                  </span>
+                )}
+                {includeWhatsApp && (
+                  <span className="ml-2 px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-semibold">
+                    WhatsApp
+                  </span>
+                )}
+              </div>
             </div>
             <Button
+              size="lg"
+              className="px-8 font-semibold shadow-lg hover:shadow-xl transition-all"
               onClick={() => {
                 if (!startDate || !endDate || (selectedSlotIds.length === 0 && !includeEmail && !includeWhatsApp)) return;
                 const payload = {
@@ -819,7 +1000,7 @@ export default function ClientDashboard() {
                 }
               }}
             >
-              Proceed
+              Proceed to Review
             </Button>
           </div>
         </div>
